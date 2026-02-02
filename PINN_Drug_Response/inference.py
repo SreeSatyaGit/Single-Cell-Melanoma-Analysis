@@ -55,12 +55,10 @@ def predict_combinations_to_csv(
     n_points=200,
     device='cpu',
     normalized=True,
-    output_dir='predictions',
-    plot_comparisons=False
+    output_dir='predictions'
 ):
     os.makedirs(output_dir, exist_ok=True)
     combined_rows = []
-    combo_results = []
     for idx, row in combos_df.iterrows():
         label = row['name'] if 'name' in combos_df.columns else f"combo_{idx + 1}"
         label_safe = _sanitize_label(label)
@@ -79,35 +77,14 @@ def predict_combinations_to_csv(
             device=device,
             normalized=normalized
         )
-        for drug_name, value in drugs_dict.items():
-            results[drug_name] = value
         results.to_csv(os.path.join(output_dir, f"predictions_{label_safe}.csv"), index=False)
-        id_vars = ['time'] + list(drugs_dict.keys())
-        long_results = results.melt(id_vars=id_vars, var_name='species', value_name='value')
+        long_results = results.melt(id_vars=['time'], var_name='species', value_name='value')
         long_results['combo'] = label
         combined_rows.append(long_results)
-        combo_results.append((label, label_safe, results))
 
     if combined_rows:
         combined_df = pd.concat(combined_rows, ignore_index=True)
         combined_df.to_csv(os.path.join(output_dir, 'predictions_all_combos.csv'), index=False)
-    if plot_comparisons and combo_results:
-        train_results = predict_new_combination(
-            model,
-            TRAINING_DATA_RAW['drugs'],
-            scalers,
-            t_range=t_range,
-            n_points=n_points,
-            device=device,
-            normalized=normalized
-        )
-        for label, label_safe, results in combo_results:
-            plot_predictions(
-                train_results,
-                results,
-                filename=os.path.join(output_dir, f"comparison_{label_safe}.png"),
-                label_new=label
-            )
 
 def plot_training_fit(model, scalers, device='cpu'):
     """
@@ -215,12 +192,6 @@ if __name__ == "__main__":
     parser.add_argument('--n-points', type=int, default=200, help='Number of time points to evaluate.')
     parser.add_argument('--unnormalized', action='store_true', help='Output predictions in raw A.U. scale.')
     parser.add_argument('--skip-plots', action='store_true', help='Skip plot generation for training fit.')
-    parser.add_argument(
-        '--plot-comparisons',
-        '--plot_comparisons',
-        action='store_true',
-        help='Plot comparisons vs training condition for each combo.'
-    )
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -245,8 +216,7 @@ if __name__ == "__main__":
             n_points=args.n_points,
             device=device,
             normalized=normalized,
-            output_dir=args.output_dir,
-            plot_comparisons=args.plot_comparisons
+            output_dir=args.output_dir
         )
         print(f"Saved predictions for {len(combos_df)} combinations to {args.output_dir}.")
     else:

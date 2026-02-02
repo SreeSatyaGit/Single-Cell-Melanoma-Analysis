@@ -119,15 +119,14 @@ Vem_0.5_PI3Ki_0.3,0.5,0.0,0.3,0.0
 ```
 
 The script writes:
-- `predictions/predictions_<name>.csv` for each combination (includes drug columns)
-- `predictions/predictions_all_combos.csv` with long-form results and drug columns
+- `predictions/predictions_<name>.csv` for each combination
+- `predictions/predictions_all_combos.csv` with long-form results
 
 Optional flags:
 - `--t-min` / `--t-max`: prediction window (default 0–48)
 - `--n-points`: number of time points (default 200)
 - `--unnormalized`: output raw A.U. values instead of normalized
 - `--skip-plots`: skip training-fit plots during inference
-- `--plot-comparisons`: save comparison plots for each combo vs training condition
 
 ## Model Architecture
 
