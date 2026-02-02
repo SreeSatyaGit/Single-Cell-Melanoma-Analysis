@@ -29,6 +29,7 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model, scalers, train_data, test_data = load_pinn_with_data(model_path, device)
     model.eval()
+    has_test_data = test_data is not None and len(test_data['t']) > 0
     
     drugs_dict = TRAINING_DATA_RAW['drugs']
     
@@ -39,8 +40,9 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
     # Get predictions at training points
     y_train_pred = model.predict(train_data['t'], drugs_dict, scalers, device)
     
-    # Get predictions at test points
-    y_test_pred = model.predict(test_data['t'], drugs_dict, scalers, device)
+    # Get predictions at test points (if any)
+    if has_test_data:
+        y_test_pred = model.predict(test_data['t'], drugs_dict, scalers, device)
     
     # Compute R² for training and test
     def compute_r2(y_true, y_pred):
@@ -49,7 +51,7 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
         return 1 - (ss_res / (ss_tot + 1e-8))
     
     r2_train = compute_r2(train_data['y_norm'], y_train_pred)
-    r2_test = compute_r2(test_data['y_norm'], y_test_pred)
+    r2_test = compute_r2(test_data['y_norm'], y_test_pred) if has_test_data else None
     
     # Create plot
     fig, axes = plt.subplots(4, 3, figsize=(16, 14))
@@ -67,14 +69,15 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
                   label=f'Train (R²={r2_train[i]:.3f})', 
                   zorder=5, edgecolors='darkgreen', linewidths=2)
         
-        # Plot test data points
-        ax.scatter(test_data['t'], test_data['y_norm'][:, i], 
-                  color='red', s=100, marker='s', 
-                  label=f'Test (R²={r2_test[i]:.3f})', 
-                  zorder=5, edgecolors='darkred', linewidths=2)
-        
-        # Add vertical line at train/test boundary
-        ax.axvline(x=8, color='gray', linestyle='--', alpha=0.5, label='Train/Test Split')
+        # Plot test data points if a holdout exists
+        if has_test_data:
+            ax.scatter(test_data['t'], test_data['y_norm'][:, i], 
+                      color='red', s=100, marker='s', 
+                      label=f'Test (R²={r2_test[i]:.3f})', 
+                      zorder=5, edgecolors='darkred', linewidths=2)
+            
+            # Add vertical line at train/test boundary
+            ax.axvline(x=8, color='gray', linestyle='--', alpha=0.5, label='Train/Test Split')
         
         ax.set_title(f'{species}', fontsize=12, fontweight='bold')
         ax.set_xlabel('Time (hours)', fontsize=10)
@@ -83,30 +86,39 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
         ax.legend(fontsize=8, loc='best')
         
         # Highlight extrapolation region
-        ax.axvspan(8, 48, alpha=0.1, color='red', label='Extrapolation')
+        if has_test_data:
+            ax.axvspan(8, 48, alpha=0.1, color='red', label='Extrapolation')
     
     # Hide extra subplot
     if len(axes) > len(SPECIES_ORDER):
         axes[-1].axis('off')
     
-    plt.suptitle('PINN Extrapolation: Train on [0,1,4,8]hrs → Predict [24,48]hrs', 
-                 fontsize=16, fontweight='bold', y=0.995)
+    if has_test_data:
+        title = 'PINN Extrapolation: Train on [0,1,4,8]hrs → Predict [24,48]hrs'
+    else:
+        title = 'PINN Training Fit: Full 0–48hr Range'
+    plt.suptitle(title, fontsize=16, fontweight='bold', y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"Saved extrapolation plot to {save_path}")
     plt.close()
     
     # Print summary statistics
-    print("\n=== EXTRAPOLATION PERFORMANCE SUMMARY ===")
-    print(f"Training R² (mean): {np.mean(r2_train):.3f} ± {np.std(r2_train):.3f}")
-    print(f"Test R² (mean): {np.mean(r2_test):.3f} ± {np.std(r2_test):.3f}")
-    print("\nPer-species Test R²:")
-    for species, r2 in zip(SPECIES_ORDER, r2_test):
-        print(f"  {species:10s}: {r2:.3f}")
+    if has_test_data:
+        print("\n=== EXTRAPOLATION PERFORMANCE SUMMARY ===")
+        print(f"Training R² (mean): {np.mean(r2_train):.3f} ± {np.std(r2_train):.3f}")
+        print(f"Test R² (mean): {np.mean(r2_test):.3f} ± {np.std(r2_test):.3f}")
+        print("\nPer-species Test R²:")
+        for species, r2 in zip(SPECIES_ORDER, r2_test):
+            print(f"  {species:10s}: {r2:.3f}")
+    else:
+        print("\n=== TRAINING FIT SUMMARY ===")
+        print(f"Training R² (mean): {np.mean(r2_train):.3f} ± {np.std(r2_train):.3f}")
 
 def plot_training_history(history_file='training_history.csv', save_path='training_test_history.png'):
     """Plot training and test loss over epochs."""
     history = pd.read_csv(history_file)
+    has_test_data = history['l_test'].notna().any()
     
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
@@ -114,7 +126,8 @@ def plot_training_history(history_file='training_history.csv', save_path='traini
     ax = axes[0]
     ax.plot(history['epoch'], history['loss'], label='Total Loss', linewidth=2)
     ax.plot(history['epoch'], history['l_data'], label='Data Loss (Train)', linewidth=2)
-    ax.plot(history['epoch'], history['l_test'], label='Data Loss (Test)', linewidth=2, linestyle='--')
+    if has_test_data:
+        ax.plot(history['epoch'], history['l_test'], label='Data Loss (Test)', linewidth=2, linestyle='--')
     ax.plot(history['epoch'], history['l_physics'], label='Physics Loss', linewidth=2, alpha=0.7)
     ax.set_yscale('log')
     ax.set_xlabel('Epoch', fontsize=12)
@@ -126,7 +139,8 @@ def plot_training_history(history_file='training_history.csv', save_path='traini
     # Plot 2: Train vs Test comparison
     ax = axes[1]
     ax.plot(history['epoch'], history['l_data'], label='Train Loss', linewidth=2, color='green')
-    ax.plot(history['epoch'], history['l_test'], label='Test Loss (Extrapolation)', linewidth=2, color='red')
+    if has_test_data:
+        ax.plot(history['epoch'], history['l_test'], label='Test Loss (Extrapolation)', linewidth=2, color='red')
     ax.set_yscale('log')
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('MSE Loss', fontsize=12)
@@ -147,9 +161,15 @@ def generate_prediction_table(model_path='pinn_model_best.pth', save_path='predi
     drugs_dict = TRAINING_DATA_RAW['drugs']
     
     # Combine train and test data
-    all_times = np.concatenate([train_data['t'], test_data['t']])
-    all_y_true_norm = np.concatenate([train_data['y_norm'], test_data['y_norm']])
-    all_y_true_raw = np.concatenate([train_data['y_raw'], test_data['y_raw']])
+    has_test_data = test_data is not None and len(test_data['t']) > 0
+    if has_test_data:
+        all_times = np.concatenate([train_data['t'], test_data['t']])
+        all_y_true_norm = np.concatenate([train_data['y_norm'], test_data['y_norm']])
+        all_y_true_raw = np.concatenate([train_data['y_raw'], test_data['y_raw']])
+    else:
+        all_times = train_data['t']
+        all_y_true_norm = train_data['y_norm']
+        all_y_true_raw = train_data['y_raw']
     
     # Get predictions (normalized and raw)
     y_pred_norm = model.predict(all_times, drugs_dict, scalers, device, normalized=True)
@@ -158,7 +178,7 @@ def generate_prediction_table(model_path='pinn_model_best.pth', save_path='predi
     # Create table
     results = []
     for t_idx, t_val in enumerate(all_times):
-        is_train = t_val <= 8
+        is_train = t_val <= 8 if has_test_data else True
         for species_idx, species in enumerate(SPECIES_ORDER):
             true_norm = all_y_true_norm[t_idx, species_idx]
             pred_norm = y_pred_norm[t_idx, species_idx]
