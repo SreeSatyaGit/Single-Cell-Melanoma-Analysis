@@ -73,16 +73,10 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # PI3K inhibitor
     PI3Ki_effect = (PI3Ki**n) / (IC50**n + PI3Ki**n + 1e-8)
     
-    # Vemurafenib (BRAF inhibitor) - includes paradoxical activation
-    # At low doses: can activate RAF (paradoxical activation)
-    # At high doses: strong inhibition
+    # Vemurafenib (BRAF inhibitor) binding to BRAF^V600E
+    # Drug-bound BRAF^V600E is kinase-inactive but dimer-competent, enabling CRAF trans-activation.
     IC50_vem = k.get('IC50_vem', 0.8)
-    Vem_inhibition = (Vem**n) / (IC50_vem**n + Vem**n + 1e-8)
-    
-    # Paradoxical activation: bell-shaped curve peaking at intermediate doses
-    k_paradox = k.get('k_vem_paradox', 0.25)
-    vem_opt = k.get('vem_optimal', 0.3)  # Optimal dose for paradox
-    Vem_activation = k_paradox * Vem * torch.exp(-((Vem - vem_opt)**2) / (2 * 0.15**2))
+    Vem_bound_braf = (Vem**n) / (IC50_vem**n + Vem**n + 1e-8)
     
     # ==================================================================
     # MAPK PATHWAY - NEGATIVE FEEDBACK LOOPS
@@ -157,11 +151,6 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     k_raf_pi3k = k.get('k_raf_pi3k', 0.2)
     RAF_to_PI3K_activation = (k_raf_pi3k * pCRAF) / (Km + pCRAF + 1e-8)
     
-    # Crosstalk 4: AKT can relieve MEK inhibition (context-dependent)
-    # Under certain conditions, AKT promotes MAPK signaling
-    k_akt_mek = k.get('k_akt_mek', 0.18)
-    AKT_to_MEK_promotion = (k_akt_mek * pAKT) / (k.get('Km_akt_mek', 1.2) + pAKT + 1e-8)
-    
     # ==================================================================
     # RECEPTOR DYNAMICS (RTK Phosphorylation)
     # ==================================================================
@@ -214,27 +203,29 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # ---------------------- MAPK Pathway ODEs ----------------------
     
     # d(pCRAF)/dt
-    # Activation: RTK signaling, paradoxical Vem activation
-    # Inhibition: Vemurafenib, AKT feedback, degradation
+    # Activation: RAS-dependent CRAF activation and vemurafenib-induced CRAF trans-activation
+    # Vem-bound BRAF^V600E forms heterodimers with CRAF, driving Ser338 phosphorylation (pCRAF).
+    # Inhibition: AKT feedback, degradation
     k_craf_act = k.get('k_craf_act', 1.2)
+    k_craf_vem = k.get('k_craf_vem', 0.6)
+    k_vem_dimer = k.get('k_vem_dimer', 1.0)
     k_craf_deg = k.get('k_craf_deg', 0.35)
     
     res_pCRAF = dy_dt[:, 4] - (
-        k_craf_act * RAS_GTP * (1.0 - Vem_inhibition)
-        + Vem_activation  # Paradoxical activation
+        k_craf_act * RAS_GTP
+        + (k_craf_vem * k_vem_dimer * Vem_bound_braf)  # RAS-independent, dimer-mediated activation
         - k_craf_deg * pCRAF
         - AKT_to_RAF_inhibition * pCRAF  # AKT negative crosstalk
     )
     
     # d(pMEK)/dt
-    # Activation: pCRAF, AKT promotion (context-dependent)
+    # Activation: pCRAF (S338-phosphorylated CRAF is the active RAF species)
     # Inhibition: Tramametinib, degradation, substrate inhibition
     k_mek_act = k.get('k_mek_act', 1.0)
     k_mek_deg = k.get('k_mek_deg', 0.4)
     
     res_pMEK = dy_dt[:, 5] - (
         k_mek_act * pCRAF * (1.0 - Tram_effect) * (1.0 - AKT_to_RAF_inhibition)
-        + AKT_to_MEK_promotion  # AKT can promote MEK under some conditions
         - k_mek_deg * pMEK
         - MEK_substrate_inhibition * pMEK  # Product inhibition
     )
