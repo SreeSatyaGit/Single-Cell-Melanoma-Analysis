@@ -9,7 +9,7 @@ import os
 
 from pinn_model import PINN
 from physics_utils import compute_physics_loss, compute_conservation_loss
-from data_utils import prepare_training_tensors, get_collocation_points, SignalingDataset, SPECIES_ORDER
+from data_utils import prepare_training_tensors, get_collocation_points, SignalingDataset, SPECIES_ORDER, VEM_ONLY_DATA, TRAM_ONLY_DATA, VEM_TRAM_DATA
 
 def train_pinn(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -17,7 +17,11 @@ def train_pinn(config):
     
     # 1. Data Preparation with train/test split
     train_until_hour = config.get('train_until_hour', 8)
-    train_data, test_data, scalers = prepare_training_tensors(train_until_hour=train_until_hour)
+    train_data, test_data, scalers = prepare_training_tensors(
+        train_datasets=[VEM_ONLY_DATA, TRAM_ONLY_DATA],
+        test_datasets=[VEM_TRAM_DATA],
+        train_until_hour=train_until_hour
+    )
     
     print(f"Training samples: {len(train_data['t'])} (t={train_data['t']})")
     print(f"Test samples: {len(test_data['t'])} (t={test_data['t']})")
@@ -81,8 +85,8 @@ def train_pinn(config):
         'k_egfr_dephos': 0.2,
         'k_her_phos': 0.4,
         'k_her_dephos': 0.15,
-        'k_igf_phos': 0.3,
-        'k_igf_dephos': 0.2
+        'k_pdgfr_phos': 0.3,
+        'k_pdgfr_dephos': 0.2
     }
     k_params = nn.ParameterDict({
         name: nn.Parameter(torch.tensor(value, device=device)) for name, value in param_defaults.items()
