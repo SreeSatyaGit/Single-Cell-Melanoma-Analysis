@@ -14,6 +14,19 @@ This project implements a Physics-Informed Neural Network (PINN) to predict drug
 
 This experimental design tests the model's ability to learn biological dynamics from limited early observations and predict future states.
 
+### Full-Range Training Option
+
+To fit **all available time points (0–48h)** before running inference on new drug combinations, set:
+
+```python
+config = {
+    'train_until_hour': 48,
+    # other hyperparameters...
+}
+```
+
+This removes the temporal holdout split and trains on the full dataset.
+
 ## Project Structure
 
 ```
@@ -66,8 +79,8 @@ python main.py
 ```
 
 This will:
-1. Train PINN on [0,1,4,8]hrs data
-2. Evaluate extrapolation to [24,48]hrs
+1. Train PINN on configured time range
+2. Evaluate extrapolation if test points are held out
 3. Generate visualizations and predictions
 
 ### Output Files

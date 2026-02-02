@@ -16,7 +16,8 @@ def train_pinn(config):
     print(f"Training on {device}")
     
     # 1. Data Preparation with train/test split
-    train_data, test_data, scalers = prepare_training_tensors(train_until_hour=8)
+    train_until_hour = config.get('train_until_hour', 8)
+    train_data, test_data, scalers = prepare_training_tensors(train_until_hour=train_until_hour)
     
     print(f"Training samples: {len(train_data['t'])} (t={train_data['t']})")
     print(f"Test samples: {len(test_data['t'])} (t={test_data['t']})")
@@ -24,10 +25,12 @@ def train_pinn(config):
     dataset = SignalingDataset(train_data['t_norm'], train_data['drugs'], train_data['y_norm'])
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=len(dataset), shuffle=False)
     
-    # Prepare test tensors
-    t_test = torch.tensor(test_data['t_norm'], dtype=torch.float32).view(-1, 1).to(device)
-    drugs_test = torch.tensor(test_data['drugs'], dtype=torch.float32).to(device)
-    y_test = torch.tensor(test_data['y_norm'], dtype=torch.float32).to(device)
+    # Prepare test tensors (if any test points exist)
+    has_test_data = len(test_data['t']) > 0
+    if has_test_data:
+        t_test = torch.tensor(test_data['t_norm'], dtype=torch.float32).view(-1, 1).to(device)
+        drugs_test = torch.tensor(test_data['drugs'], dtype=torch.float32).to(device)
+        y_test = torch.tensor(test_data['y_norm'], dtype=torch.float32).to(device)
     
     # Move scalers to device
     scalers_device = {k: v.to(device) if torch.is_tensor(v) else v for k, v in scalers.items()}
@@ -143,9 +146,11 @@ def train_pinn(config):
         
         # Evaluate on test set (without gradients)
         model.eval()
-        with torch.no_grad():
-            y_test_pred = model(t_test, drugs_test)
-            l_test = mse_loss(y_test_pred, y_test)
+        l_test = torch.tensor(float('nan'), device=device)
+        if has_test_data:
+            with torch.no_grad():
+                y_test_pred = model(t_test, drugs_test)
+                l_test = mse_loss(y_test_pred, y_test)
         
         # Logging
         if epoch % 50 == 0:
@@ -160,7 +165,7 @@ def train_pinn(config):
             })
             progress_bar.set_postfix({
                 'train': f"{l_data.item():.4e}", 
-                'test': f"{l_test.item():.4e}"
+                'test': f"{l_test.item():.4e}" if has_test_data else "n/a"
             })
             
         # Checkpoints/Early Stopping
@@ -190,6 +195,7 @@ def train_pinn(config):
 
 if __name__ == "__main__":
     config = {
+        'train_until_hour': 8,
         'num_epochs': 10000,
         'learning_rate': 0.0005,
         'lr_decay': 0.98,
