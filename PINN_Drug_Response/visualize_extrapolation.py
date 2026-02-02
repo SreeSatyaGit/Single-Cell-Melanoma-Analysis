@@ -14,7 +14,7 @@ def load_pinn_with_data(filepath, device='cpu'):
     state_dict = checkpoint['model_state_dict']
     hidden_size = state_dict['input_layer.weight'].shape[0]
     
-    model = PINN(input_size=5, hidden_size=hidden_size, output_size=11).to(device)
+    model = PINN(input_size=6, hidden_size=hidden_size, output_size=11).to(device)
     model.load_state_dict(state_dict)
     scalers = checkpoint['scalers']
     train_data = checkpoint.get('train_data', None)

@@ -150,15 +150,18 @@ VEM_ONLY_DATA = {
 
 `prepare_training_tensors` will automatically combine all non-None datasets into one
 training set, normalize across the global max, and keep drug inputs aligned per condition.
+The physics collocation sampler also injects fixed Vem+Tram anchor points to prevent the
+model from drifting in the combination space.
 
 ## Model Architecture
 
-**Input Layer (5 features):**
+**Input Layer (6 features):**
 - Time (normalized)
 - Vemurafenib concentration
 - Trametinib concentration
 - PI3K inhibitor concentration
 - RAS inhibitor concentration
+- Vemurafenib × Trametinib interaction term
 
 **Hidden Layers:**
 - 4 hidden layers × 100 neurons

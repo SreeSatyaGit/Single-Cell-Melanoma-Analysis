@@ -40,7 +40,7 @@ def train_pinn(config):
     scalers_device = {k: v.to(device) if torch.is_tensor(v) else v for k, v in scalers.items()}
     
     # 2. Model and ODE Parameters
-    model = PINN(input_size=5, hidden_size=config['hidden_size'], output_size=11).to(device)
+    model = PINN(input_size=6, hidden_size=config['hidden_size'], output_size=11).to(device)
     
     # Learnable ODE constants (aligned with compute_physics_loss)
     param_defaults = {
@@ -132,10 +132,16 @@ def train_pinn(config):
         l_physics = compute_physics_loss(model, t_physics, drugs_physics, k_params, scalers_device)
         
         # --- (c) Boundary Loss (t=0) ---
-        t0 = torch.zeros((1, 1), device=device)
-        drugs0 = drugs_data_batch[0:1]
+        t0_mask = (t_data.squeeze(1) == 0)
+        if torch.any(t0_mask):
+            t0 = t_data[t0_mask]
+            drugs0 = drugs_data_batch[t0_mask]
+            y0_exp = y_exp[t0_mask]
+        else:
+            t0 = torch.zeros((1, 1), device=device)
+            drugs0 = drugs_data_batch[0:1]
+            y0_exp = y_exp[0:1]
         y0_pred = model(t0, drugs0)
-        y0_exp = y_exp[0:1]
         l_boundary = mse_loss(y0_pred, y0_exp)
         
         # --- (d) Conservation/Constraint Loss ---
