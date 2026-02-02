@@ -129,6 +129,45 @@ Optional flags:
 - `--skip-plots`: skip training-fit plots during inference
 - `--plot-comparisons`: plot training vs combo predictions (saved in the output directory)
 
+## ODE Fitting + New Combo Prediction (Vem/Tram Training)
+
+The ODE fitting pipeline supports training on Vem-only, Tram-only, and Vem+Tram western blot
+tables, then predicting Vem+PI3Ki or Vem+panRASi **without retraining**. The ODE model keeps
+the same mechanistic MAPK/PI3K structure, with explicit drug effects and optional correction
+term.
+
+### How to run predictions for new drug combos
+
+1. Prepare a western blot quantification CSV with columns:
+   `condition, drug_vem_uM, drug_tram_nM, drug_pi3k_uM, drug_panras_uM, time_min, readout, value, value_sem(optional)`
+2. Fit an ensemble:
+
+```bash
+python run_fit.py --data wb.csv --config config.yaml --output fit_outputs
+```
+
+3. Predict new combos:
+
+```bash
+python run_predict.py --params fit_outputs --config config.yaml --mode vem_pi3k --output predictions
+python run_predict.py --params fit_outputs --config config.yaml --mode vem_panras --output predictions
+```
+
+### Example output figures and files
+
+- `fit_outputs/fit_00.json` .. `fit_outputs/fit_0N.json` (ensemble parameters)
+- `fit_outputs/best_fit.json` (best fit)
+- `fit_outputs/sanity_checks.json` (monotonicity checks)
+- `predictions/predictions_vem_pi3k.csv` (time courses + uncertainty bands)
+- `predictions/predictions_vem_panras.csv`
+
+### Important limitations
+
+- Predictions for PI3Ki and panRASi depend on assumed IC50/Hill parameters unless data is
+  provided to refit them.
+- Extrapolation is mechanistic; uncertainty reflects parameter variability but not missing
+  biology beyond the modeled structure.
+
 ## Training on Multiple Drug Conditions
 
 If you have additional datasets (e.g., **Vem only** or **Tram only**), you can include them
