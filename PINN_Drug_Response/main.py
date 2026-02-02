@@ -1,62 +1,50 @@
 import torch
 import os
 from train_pinn import train_pinn
-from inference import load_pinn, plot_training_fit, predict_new_combination, plot_predictions, plot_history
-from data_utils import TRAINING_DATA_RAW
+from visualize_extrapolation import plot_extrapolation_results, plot_training_history, generate_prediction_table
 
 def main():
-    # 1. Configuration
+    # 1. Configuration - OPTIMIZED FOR EXTRAPOLATION
     config = {
-        'num_epochs': 5000,
-        'learning_rate': 0.001,
-        'lr_decay': 0.95,
-        'batch_size': 6,
-        'hidden_size': 100,
-        'num_physics_points': 100,
-        'weight_decay': 1e-5,
+        'num_epochs': 10000,       # More epochs for convergence
+        'learning_rate': 0.0005,   # Lower LR for stability
+        'lr_decay': 0.98,          # Slower decay
+        'batch_size': 4,           # 4 training points
+        'hidden_size': 128,        # Wider network
+        'num_physics_points': 200, # More physics constraints
+        'weight_decay': 1e-4,      # Stronger regularization
         'weights': {
             'data': 1.0,
-            'physics': 0.5,
-            'boundary': 0.3,
-            'conservation': 0.2
+            'physics': 5.0,        # CRITICAL: High physics weight for extrapolation
+            'boundary': 1.0,
+            'conservation': 0.5
         }
     }
     
     # 2. Train the model
-    print("Starting PINN training...")
-    model, k_params, history, scalers = train_pinn(config)
+    print("="*60)
+    print("TRAINING: Using Vem+Tram data at [0,1,4,8]hrs")
+    print("TESTING: Extrapolating to [24,48]hrs")
+    print("="*60)
     
-    # 3. Visualization and Inference
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model_path = 'pinn_model_best.pth'
+    model, k_params, history, scalers, train_data, test_data = train_pinn(config)
     
-    if os.path.exists(model_path):
-        print("Generating visualizations and predictions...")
-        model, scalers = load_pinn(model_path, device)
+    # 3. Generate visualizations
+    print("\n" + "="*60)
+    print("GENERATING EXTRAPOLATION ANALYSIS")
+    print("="*60)
+    
+    if os.path.exists('pinn_model_best.pth'):
+        plot_extrapolation_results()
+        plot_training_history()
+        df = generate_prediction_table()
         
-        # Training history
-        plot_history('training_history.csv')
-        
-        # Training data fit
-        plot_training_fit(model, scalers, device)
-        
-        # New drug combination prediction
-        prediction_drugs = {
-            'vemurafenib': 0.5,
-            'trametinib': 0.0,
-            'pi3k_inhibitor': 0.3,
-            'ras_inhibitor': 0.0
-        }
-        new_results = predict_new_combination(model, prediction_drugs, scalers, device=device)
-        new_results.to_csv('predictions_pi3ki_vem.csv', index=False)
-        
-        # Training condition predictions (for comparison)
-        train_results = predict_new_combination(model, TRAINING_DATA_RAW['drugs'], scalers, device=device)
-        
-        # Final comparison plot
-        plot_predictions(train_results, new_results)
-        
-        print(f"Results saved to {os.getcwd()}")
+        print("\n✓ Results saved:")
+        print("  - extrapolation_results.png")
+        print("  - training_test_history.png")
+        print("  - predictions_table.csv")
+        print("  - training_history.csv")
+        print("  - training_config.json")
     else:
         print("Error: Model checkpoint not found.")
 

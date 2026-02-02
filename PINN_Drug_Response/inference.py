@@ -8,9 +8,12 @@ from physics_utils import compute_physics_loss
 import seaborn as sns
 
 def load_pinn(filepath, device='cpu'):
-    checkpoint = torch.load(filepath, map_location=device)
-    model = PINN(input_size=5, hidden_size=100, output_size=11).to(device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    checkpoint = torch.load(filepath, map_location=device, weights_only=False)
+    # Auto-detect hidden_size from checkpoint
+    state_dict = checkpoint['model_state_dict']
+    hidden_size = state_dict['input_layer.weight'].shape[0]
+    model = PINN(input_size=5, hidden_size=hidden_size, output_size=11).to(device)
+    model.load_state_dict(state_dict)
     scalers = checkpoint['scalers']
     return model, scalers
 
