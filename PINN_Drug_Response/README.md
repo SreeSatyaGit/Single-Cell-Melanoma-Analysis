@@ -129,6 +129,28 @@ Optional flags:
 - `--skip-plots`: skip training-fit plots during inference
 - `--plot-comparisons`: plot training vs combo predictions (saved in the output directory)
 
+## Training on Multiple Drug Conditions
+
+If you have additional datasets (e.g., **Vem only** or **Tram only**), you can include them
+in training by populating the optional dataset dicts in `data_utils.py`:
+
+```python
+VEM_ONLY_DATA = {
+    'name': 'Vem_0.5_only',
+    'time_points': np.array([...]),
+    'species': {...},  # same keys as SPECIES_ORDER
+    'drugs': {
+        'vemurafenib': 0.5,
+        'trametinib': 0.0,
+        'pi3k_inhibitor': 0.0,
+        'ras_inhibitor': 0.0
+    }
+}
+```
+
+`prepare_training_tensors` will automatically combine all non-None datasets into one
+training set, normalize across the global max, and keep drug inputs aligned per condition.
+
 ## Model Architecture
 
 **Input Layer (5 features):**

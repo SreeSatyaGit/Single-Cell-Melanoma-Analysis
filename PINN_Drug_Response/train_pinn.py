@@ -101,7 +101,11 @@ def train_pinn(config):
     history = []
     
     # Collocation points for physics loss (only in training time range)
-    t_physics_raw, drugs_physics_raw = get_collocation_points(config['num_physics_points'])
+    t_physics_raw, drugs_physics_raw = get_collocation_points(
+        config['num_physics_points'],
+        train_until_hour=train_until_hour,
+        t_max=float(scalers['t_range'])
+    )
     t_physics = t_physics_raw.to(device)
     drugs_physics = drugs_physics_raw.to(device)
     
@@ -146,7 +150,11 @@ def train_pinn(config):
         scheduler.step()
         
         # Resample physics points every epoch for better coverage of the high-dimensional drug space
-        t_physics_raw, drugs_physics_raw = get_collocation_points(config['num_physics_points'])
+        t_physics_raw, drugs_physics_raw = get_collocation_points(
+            config['num_physics_points'],
+            train_until_hour=train_until_hour,
+            t_max=float(scalers['t_range'])
+        )
         t_physics = t_physics_raw.to(device)
         drugs_physics = drugs_physics_raw.to(device)
         

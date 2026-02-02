@@ -3,7 +3,8 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 # Training data from western blot experiments
-TRAINING_DATA_RAW = {
+VEM_TRAM_DATA = {
+    'name': 'Vem_0.5_Tram_0.3',
     'time_points': np.array([0, 1, 4, 8, 24, 48]),
     'species': {
         'pEGFR': np.array([0.222379739,0.622877159,0.629217784,0.533530834,0.022513609,0.010036399]),
@@ -26,6 +27,15 @@ TRAINING_DATA_RAW = {
     }
 }
 
+# Optional single-agent datasets. Populate these dicts with your measurements to include them in training.
+VEM_ONLY_DATA = None
+TRAM_ONLY_DATA = None
+
+TRAINING_DATASETS = [dataset for dataset in [VEM_TRAM_DATA, VEM_ONLY_DATA, TRAM_ONLY_DATA] if dataset is not None]
+
+# Backward-compatible alias (plots still default to Vem+Tram unless specified otherwise)
+TRAINING_DATA_RAW = VEM_TRAM_DATA
+
 SPECIES_ORDER = [
     'pEGFR', 'HER2', 'HER3', 'IGF1R', 'pCRAF', 'pMEK', 
     'pERK', 'DUSP6', 'pAKT', 'pS6K', 'p4EBP1'
@@ -43,7 +53,7 @@ class SignalingDataset(Dataset):
     def __getitem__(self, idx):
         return self.t[idx], self.drugs[idx], self.y[idx]
 
-def prepare_training_tensors(train_until_hour=8):
+def prepare_training_tensors(train_until_hour=8, datasets=None):
     """
     Prepares normalized tensors for training with train/test split.
     
@@ -58,57 +68,82 @@ def prepare_training_tensors(train_until_hour=8):
     Args:
         train_until_hour: Train only on time points <= this value.
                          Default 8 means train on [0,1,4,8], test on [24,48]
+        datasets: Optional list of datasets to combine. Each dataset must include
+                  time_points, species, and drugs. Defaults to TRAINING_DATASETS.
     """
-    t_points = TRAINING_DATA_RAW['time_points'].astype(np.float32)
-    num_points = len(t_points)
-    
+    if datasets is None:
+        datasets = TRAINING_DATASETS or [TRAINING_DATA_RAW]
+    if not datasets:
+        raise ValueError("No training datasets provided. Please define TRAINING_DATASETS or pass datasets.")
+
     # ==================================================================
     # 1. PREPARE SPECIES DATA
     # ==================================================================
-    y_data = np.zeros((num_points, 11), dtype=np.float32)
-    for i, species in enumerate(SPECIES_ORDER):
-        y_data[:, i] = TRAINING_DATA_RAW['species'][species]
-    
+    all_y = []
+    all_t = []
+    for dataset in datasets:
+        t_points = dataset['time_points'].astype(np.float32)
+        num_points = len(t_points)
+        y_data = np.zeros((num_points, 11), dtype=np.float32)
+        for i, species in enumerate(SPECIES_ORDER):
+            y_data[:, i] = dataset['species'][species]
+        all_t.append(t_points)
+        all_y.append(y_data)
+
+    y_all = np.concatenate(all_y, axis=0)
+
     # ==================================================================
-    # 2. TRAIN/TEST SPLIT
+    # 2. TRAIN/TEST SPLIT (PER DATASET)
     # ==================================================================
-    train_mask = t_points <= train_until_hour
-    t_train = t_points[train_mask]
-    y_train = y_data[train_mask]
-    
-    t_test = t_points[~train_mask]
-    y_test = y_data[~train_mask]
-    
+    t_train_list = []
+    y_train_list = []
+    drugs_train_list = []
+    t_test_list = []
+    y_test_list = []
+    drugs_test_list = []
+
+    for dataset, t_points, y_data in zip(datasets, all_t, all_y):
+        train_mask = t_points <= train_until_hour
+        t_train_list.append(t_points[train_mask])
+        y_train_list.append(y_data[train_mask])
+        t_test_list.append(t_points[~train_mask])
+        y_test_list.append(y_data[~train_mask])
+
+        drugs_raw = dataset['drugs']
+        drugs_vec = np.array([
+            drugs_raw['vemurafenib'],
+            drugs_raw['trametinib'],
+            drugs_raw['pi3k_inhibitor'],
+            drugs_raw['ras_inhibitor']
+        ], dtype=np.float32)
+        drugs_train_list.append(np.tile(drugs_vec, (train_mask.sum(), 1)))
+        drugs_test_list.append(np.tile(drugs_vec, (np.logical_not(train_mask)).sum(), 1))
+
+    t_train = np.concatenate(t_train_list, axis=0) if t_train_list else np.array([], dtype=np.float32)
+    y_train = np.concatenate(y_train_list, axis=0) if y_train_list else np.array([], dtype=np.float32)
+    drugs_train = np.concatenate(drugs_train_list, axis=0) if drugs_train_list else np.array([], dtype=np.float32)
+
+    t_test = np.concatenate(t_test_list, axis=0) if t_test_list else np.array([], dtype=np.float32)
+    y_test = np.concatenate(y_test_list, axis=0) if y_test_list else np.array([], dtype=np.float32)
+    drugs_test = np.concatenate(drugs_test_list, axis=0) if drugs_test_list else np.array([], dtype=np.float32)
+
     # ==================================================================
     # 3. SPECIES NORMALIZATION: [0, 1] using GLOBAL MAX
     # ==================================================================
     # Use global max (all data) to prevent test values from exceeding 1.0
-    y_global_max = np.max(y_data, axis=0)  # Max across ALL time points
+    y_global_max = np.max(y_all, axis=0)  # Max across ALL time points/conditions
     y_global_min = np.zeros_like(y_global_max)  # Min is 0 for biological data
     y_scale = y_global_max + 1e-8  # Scale factor = max value
-    
-    y_train_norm = y_train / y_scale
-    y_test_norm = y_test / y_scale
-    
+
+    y_train_norm = y_train / y_scale if y_train.size else y_train
+    y_test_norm = y_test / y_scale if y_test.size else y_test
+
     # ==================================================================
     # 4. TIME NORMALIZATION: [0, 1]
     # ==================================================================
-    t_max = 48.0
-    t_train_norm = (t_train / t_max).reshape(-1, 1)
-    t_test_norm = (t_test / t_max).reshape(-1, 1)
-    
-    # ==================================================================
-    # 5. DRUGS: Keep as-is (already [0, 1])
-    # ==================================================================
-    drugs_raw = TRAINING_DATA_RAW['drugs']
-    drugs_vec = np.array([
-        drugs_raw['vemurafenib'],
-        drugs_raw['trametinib'],
-        drugs_raw['pi3k_inhibitor'],
-        drugs_raw['ras_inhibitor']
-    ], dtype=np.float32)
-    drugs_train = np.tile(drugs_vec, (len(t_train), 1))
-    drugs_test = np.tile(drugs_vec, (len(t_test), 1))
+    t_max = float(max(np.max(t) for t in all_t)) if all_t else 48.0
+    t_train_norm = (t_train / t_max).reshape(-1, 1) if t_train.size else t_train.reshape(-1, 1)
+    t_test_norm = (t_test / t_max).reshape(-1, 1) if t_test.size else t_test.reshape(-1, 1)
     
     # ==================================================================
     # 6. SCALERS (for physics loss and inference)
@@ -139,7 +174,7 @@ def prepare_training_tensors(train_until_hour=8):
     
     return train_data, test_data, scalers
 
-def get_collocation_points(n_points=100, extrapolation_weight=2.0):
+def get_collocation_points(n_points=100, extrapolation_weight=2.0, train_until_hour=8, t_max=48.0):
     """
     Generates collocation points for physics loss.
     CRITICAL: Must cover ENTIRE time domain including extrapolation region.
@@ -147,19 +182,22 @@ def get_collocation_points(n_points=100, extrapolation_weight=2.0):
     Args:
         n_points: Total number of collocation points
         extrapolation_weight: How many more points in extrapolation vs training region
+        train_until_hour: Upper bound of training time region
+        t_max: Max time used for normalization
     """
     # Split points between training region and extrapolation region
-    # Training: 0-8hrs (normalized: 0-0.167)
-    # Extrapolation: 8-48hrs (normalized: 0.167-1.0)
+    # Training: 0-train_until_hour (normalized: 0-(train_until_hour/t_max))
+    # Extrapolation: train_until_hour-t_max (normalized: (train_until_hour/t_max)-1.0)
     
     n_train_region = int(n_points / (1 + extrapolation_weight))
     n_extrap_region = n_points - n_train_region
     
-    # Training region: 0 to 8 hrs (normalized 0 to 8/48 = 0.167)
-    t_train_region = np.linspace(0, 8/48, n_train_region)
+    # Training region: 0 to train_until_hour
+    train_norm = min(train_until_hour / t_max, 1.0)
+    t_train_region = np.linspace(0, train_norm, n_train_region)
     
-    # Extrapolation region: 8 to 48 hrs (normalized 0.167 to 1.0)
-    t_extrap_region = np.linspace(8/48, 1.0, n_extrap_region)
+    # Extrapolation region: train_until_hour to t_max
+    t_extrap_region = np.linspace(train_norm, 1.0, n_extrap_region)
     
     t_physics = np.concatenate([t_train_region, t_extrap_region]).reshape(-1, 1)
     
