@@ -1,12 +1,14 @@
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-from pinn_model import PINN
-from data_utils import SPECIES_ORDER, TRAINING_DATA_RAW
-from physics_utils import compute_physics_loss
-import seaborn as sns
+import argparse
 import os
+import re
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+
+from data_utils import SPECIES_ORDER, TRAINING_DATA_RAW
+from pinn_model import PINN
 
 def load_pinn(filepath, device='cpu'):
     checkpoint = torch.load(filepath, map_location=device, weights_only=False)
@@ -29,6 +31,83 @@ def predict_new_combination(model, drugs_dict, scalers, t_range=(0, 48), n_point
     results = pd.DataFrame(y_pred, columns=SPECIES_ORDER)
     results['time'] = t_eval
     return results
+
+def load_drug_combinations(csv_path):
+    required_cols = ['vemurafenib', 'trametinib', 'pi3k_inhibitor', 'ras_inhibitor']
+    combos = pd.read_csv(csv_path)
+    missing = [col for col in required_cols if col not in combos.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required columns in {csv_path}: {', '.join(missing)}. "
+            f"Expected columns: {', '.join(required_cols)} (optional: name)."
+        )
+    return combos
+
+def _sanitize_label(label):
+    sanitized = re.sub(r'[^A-Za-z0-9_-]+', '_', str(label)).strip('_')
+    return sanitized or 'combo'
+
+def predict_combinations_to_csv(
+    model,
+    combos_df,
+    scalers,
+    t_range=(0, 48),
+    n_points=200,
+    device='cpu',
+    normalized=True,
+    output_dir='predictions',
+    plot_comparisons=False
+):
+    os.makedirs(output_dir, exist_ok=True)
+    combined_rows = []
+    combo_results = []
+    for idx, row in combos_df.iterrows():
+        label = row['name'] if 'name' in combos_df.columns else f"combo_{idx + 1}"
+        label_safe = _sanitize_label(label)
+        drugs_dict = {
+            'vemurafenib': float(row['vemurafenib']),
+            'trametinib': float(row['trametinib']),
+            'pi3k_inhibitor': float(row['pi3k_inhibitor']),
+            'ras_inhibitor': float(row['ras_inhibitor'])
+        }
+        results = predict_new_combination(
+            model,
+            drugs_dict,
+            scalers,
+            t_range=t_range,
+            n_points=n_points,
+            device=device,
+            normalized=normalized
+        )
+        for drug_name, value in drugs_dict.items():
+            results[drug_name] = value
+        results.to_csv(os.path.join(output_dir, f"predictions_{label_safe}.csv"), index=False)
+        id_vars = ['time'] + list(drugs_dict.keys())
+        long_results = results.melt(id_vars=id_vars, var_name='species', value_name='value')
+        long_results['combo'] = label
+        combined_rows.append(long_results)
+        combo_results.append((label, label_safe, results))
+
+    if combined_rows:
+        combined_df = pd.concat(combined_rows, ignore_index=True)
+        combined_df.to_csv(os.path.join(output_dir, 'predictions_all_combos.csv'), index=False)
+    if plot_comparisons and combo_results:
+        train_results = predict_new_combination(
+            model,
+            TRAINING_DATA_RAW['drugs'],
+            scalers,
+            t_range=t_range,
+            n_points=n_points,
+            device=device,
+            normalized=normalized
+        )
+        for label, label_safe, results in combo_results:
+            plot_predictions(
+                train_results,
+                results,
+                filename=os.path.join(output_dir, f"comparison_{label_safe}.png"),
+                label_new=label
+            )
 
 def plot_training_fit(model, scalers, device='cpu'):
     """
@@ -127,44 +206,96 @@ def plot_history(history_file):
     plt.close()
 
 if __name__ == "__main__":
-    # Example usage
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model, scalers = load_pinn('pinn_model_best.pth', device)
-    
-    # 1. Plot Training History
-    if os.path.exists('training_history.csv'):
-        plot_history('training_history.csv')
-    
-    # 2. Plot Training Fit
-    plot_training_fit(model, scalers, device)
-    
-    # 3. Predict for new combination: Vem + PI3Ki
-    vemp_pi3ki_drugs = {
-        'vemurafenib': 0.5,
-        'trametinib': 0.0,
-        'pi3k_inhibitor': 0.3, # Assuming typical dose
-        'ras_inhibitor': 0.0
-    }
-    
-    vem_pi3ki_results = predict_new_combination(model, vemp_pi3ki_drugs, scalers, device=device)
-    vem_pi3ki_results.to_csv('predictions_vem_pi3ki.csv', index=False)
-    
-    # 4. Predict for new combination: Vem + PanRAS
-    vem_panras_drugs = {
-        'vemurafenib': 0.5,
-        'trametinib': 0.0,
-        'pi3k_inhibitor': 0.0,
-        'ras_inhibitor': 0.3   # Assuming typical dose
-    }
-    
-    vem_panras_results = predict_new_combination(model, vem_panras_drugs, scalers, device=device)
-    vem_panras_results.to_csv('predictions_vem_panras.csv', index=False)
+    parser = argparse.ArgumentParser(description="Run inference for new drug combinations.")
+    parser.add_argument('--model', default='pinn_model_best.pth', help='Path to trained model checkpoint.')
+    parser.add_argument('--combos-csv', default=None, help='CSV file with drug combinations and dosages.')
+    parser.add_argument('--output-dir', default='predictions', help='Directory to save prediction CSVs.')
+    parser.add_argument('--t-min', type=float, default=0.0, help='Minimum time for prediction range.')
+    parser.add_argument('--t-max', type=float, default=48.0, help='Maximum time for prediction range.')
+    parser.add_argument('--n-points', type=int, default=200, help='Number of time points to evaluate.')
+    parser.add_argument('--unnormalized', action='store_true', help='Output predictions in raw A.U. scale.')
+    parser.add_argument('--skip-plots', action='store_true', help='Skip plot generation for training fit.')
+    parser.add_argument(
+        '--plot-comparisons',
+        '--plot_comparisons',
+        action='store_true',
+        help='Plot comparisons vs training condition for each combo.'
+    )
+    args = parser.parse_args()
 
-    # Generate Training predictions for comparison
-    train_results = predict_new_combination(model, TRAINING_DATA_RAW['drugs'], scalers, device=device)
-    
-    # 5. Plot Comparisons
-    plot_predictions(train_results, vem_pi3ki_results, filename='comparison_vem_pi3ki.png', label_new='Vem+PI3Ki')
-    plot_predictions(train_results, vem_panras_results, filename='comparison_vem_panras.png', label_new='Vem+PanRAS')
-    
-    print("Inference and visualization complete.")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model, scalers = load_pinn(args.model, device)
+
+    if os.path.exists('training_history.csv') and not args.skip_plots:
+        plot_history('training_history.csv')
+
+    if not args.skip_plots:
+        plot_training_fit(model, scalers, device)
+
+    normalized = not args.unnormalized
+    t_range = (args.t_min, args.t_max)
+
+    if args.combos_csv:
+        combos_df = load_drug_combinations(args.combos_csv)
+        predict_combinations_to_csv(
+            model,
+            combos_df,
+            scalers,
+            t_range=t_range,
+            n_points=args.n_points,
+            device=device,
+            normalized=normalized,
+            output_dir=args.output_dir,
+            plot_comparisons=args.plot_comparisons
+        )
+        print(f"Saved predictions for {len(combos_df)} combinations to {args.output_dir}.")
+    else:
+        # Backwards-compatible single predictions + plots
+        vemp_pi3ki_drugs = {
+            'vemurafenib': 0.5,
+            'trametinib': 0.0,
+            'pi3k_inhibitor': 0.3,
+            'ras_inhibitor': 0.0
+        }
+        vem_pi3ki_results = predict_new_combination(
+            model,
+            vemp_pi3ki_drugs,
+            scalers,
+            t_range=t_range,
+            n_points=args.n_points,
+            device=device,
+            normalized=normalized
+        )
+        vem_pi3ki_results.to_csv('predictions_vem_pi3ki.csv', index=False)
+
+        vem_panras_drugs = {
+            'vemurafenib': 0.5,
+            'trametinib': 0.0,
+            'pi3k_inhibitor': 0.0,
+            'ras_inhibitor': 0.3
+        }
+        vem_panras_results = predict_new_combination(
+            model,
+            vem_panras_drugs,
+            scalers,
+            t_range=t_range,
+            n_points=args.n_points,
+            device=device,
+            normalized=normalized
+        )
+        vem_panras_results.to_csv('predictions_vem_panras.csv', index=False)
+
+        train_results = predict_new_combination(
+            model,
+            TRAINING_DATA_RAW['drugs'],
+            scalers,
+            t_range=t_range,
+            n_points=args.n_points,
+            device=device,
+            normalized=normalized
+        )
+        if not args.skip_plots:
+            plot_predictions(train_results, vem_pi3ki_results, filename='comparison_vem_pi3ki.png', label_new='Vem+PI3Ki')
+            plot_predictions(train_results, vem_panras_results, filename='comparison_vem_panras.png', label_new='Vem+PanRAS')
+
+        print("Inference and visualization complete.")
