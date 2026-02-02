@@ -163,6 +163,34 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     AKT_to_MEK_promotion = (k_akt_mek * pAKT) / (k.get('Km_akt_mek', 1.2) + pAKT + 1e-8)
     
     # ==================================================================
+    # RECEPTOR DYNAMICS (RTK Phosphorylation)
+    # ==================================================================
+    
+    # Negative feedback from ERK to Receptors (from MATLAB ERK_EGFR_effect etc.)
+    k_erk_rtk = k.get('k_erk_rtk', 0.1)
+    ERK_feedback = (k_erk_rtk * pERK) / (k.get('Km_erk_rtk', 0.5) + pERK + 1e-8)
+    
+    # d(pEGFR)/dt
+    # Activation depends on time (stimulus) and baseline EGFR
+    # Inhibition from ERK feedback and dephosphorylation
+    k_egfr_phos = k.get('k_egfr_phos', 0.5)
+    k_egfr_dephos = k.get('k_egfr_dephos', 0.2)
+    res_pEGFR = dy_dt[:, 0] - (
+        k_egfr_phos * (1.0 - pEGFR) - (k_egfr_dephos + ERK_feedback) * pEGFR
+    )
+    
+    # d(HER2)/dt and d(HER3)/dt
+    k_her_phos = k.get('k_her_phos', 0.4)
+    k_her_dephos = k.get('k_her_dephos', 0.15)
+    res_HER2 = dy_dt[:, 1] - (k_her_phos * (1.0 - HER2) - (k_her_dephos + ERK_feedback) * HER2)
+    res_HER3 = dy_dt[:, 2] - (k_her_phos * (1.0 - HER3) - (k_her_dephos + ERK_feedback) * HER3)
+    
+    # d(IGF1R)/dt
+    k_igf_phos = k.get('k_igf_phos', 0.3)
+    k_igf_dephos = k.get('k_igf_dephos', 0.2)
+    res_IGF1R = dy_dt[:, 3] - (k_igf_phos * (1.0 - IGF1R) - (k_igf_dephos + ERK_feedback) * IGF1R)
+    
+    # ==================================================================
     # RTK SIGNALING WITH MULTIPLE FEEDBACKS
     # ==================================================================
     
@@ -170,14 +198,14 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     w_her3 = k.get('w_her3', 1.5)  # HER3 is particularly important for PI3K
     RTK_base = pEGFR + HER2 + w_her3 * HER3 + IGF1R
     
-    # RTK signal to MAPK pathway (includes ERK→SOS feedback and AKT→RTK feedback)
-    RTK_to_MAPK = RTK_base * (1.0 - ERK_to_SOS_inhibition) * (1.0 - AKT_to_RTK_feedback)
+    # SOS/RAS suppression by ERK (feeds MAPK arm)
+    RAS_GTP = RTK_base * (1.0 - ERK_to_SOS_inhibition) * (1.0 - AKT_to_RTK_feedback)
     
     # RTK signal to PI3K pathway (includes ERK and mTOR feedbacks)
-    RTK_to_PI3K = RTK_base * (1.0 - ERK_to_PI3K_inhibition) * (1.0 - mTOR_total_feedback)
+    PI3K_input = RTK_base * (1.0 - ERK_to_PI3K_inhibition) * (1.0 - mTOR_total_feedback)
     
     # Add compensatory RAF→PI3K activation
-    PI3K_total_input = RTK_to_PI3K + RAF_to_PI3K_activation
+    PI3K_total_input = PI3K_input + RAF_to_PI3K_activation
     
     # ==================================================================
     # ORDINARY DIFFERENTIAL EQUATIONS (ODEs)
@@ -192,7 +220,7 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     k_craf_deg = k.get('k_craf_deg', 0.35)
     
     res_pCRAF = dy_dt[:, 4] - (
-        k_craf_act * RTK_to_MAPK * (1.0 - Vem_inhibition)
+        k_craf_act * RAS_GTP * (1.0 - Vem_inhibition)
         + Vem_activation  # Paradoxical activation
         - k_craf_deg * pCRAF
         - AKT_to_RAF_inhibition * pCRAF  # AKT negative crosstalk
