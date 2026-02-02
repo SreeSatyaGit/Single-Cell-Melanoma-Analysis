@@ -35,10 +35,55 @@ def train_pinn(config):
     # 2. Model and ODE Parameters
     model = PINN(input_size=5, hidden_size=config['hidden_size'], output_size=11).to(device)
     
-    # Learnable ODE constants
-    k_names = ['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9', 'k10', 'k11', 'k12', 'k13', 'k14', 'k_cat']
+    # Learnable ODE constants (aligned with compute_physics_loss)
+    param_defaults = {
+        'Km': 0.5,
+        'IC50': 0.5,
+        'hill_coeff': 2.0,
+        'IC50_vem': 0.8,
+        'k_vem_paradox': 0.25,
+        'vem_optimal': 0.3,
+        'k_dusp_synth': 0.8,
+        'k_dusp_deg': 0.5,
+        'Km_dusp': 0.4,
+        'n_dusp': 2.5,
+        'k_dusp_cat': 0.6,
+        'k_erk_sos': 0.4,
+        'k_mek_inhib': 0.2,
+        'k_s6k_irs': 0.7,
+        'Km_s6k': 0.5,
+        'k_s6k_mtor': 0.3,
+        'k_4ebp1_comp': 0.25,
+        'k_akt_rtk': 0.15,
+        'k_akt_raf': 0.5,
+        'k_erk_pi3k': 0.45,
+        'k_raf_pi3k': 0.2,
+        'k_akt_mek': 0.18,
+        'Km_akt_mek': 1.2,
+        'k_craf_act': 1.2,
+        'k_craf_deg': 0.35,
+        'k_mek_act': 1.0,
+        'k_mek_deg': 0.4,
+        'k_erk_act': 1.2,
+        'k_erk_deg': 0.45,
+        'k_akt_act': 1.0,
+        'k_akt_deg': 0.4,
+        'k_s6k_act': 0.9,
+        'k_s6k_deg': 0.5,
+        'k_4ebp1_act': 0.85,
+        'k_4ebp1_deg': 0.45,
+        'k_erk_rtk': 0.1,
+        'Km_erk_rtk': 0.5,
+        'k_egfr_phos': 0.5,
+        'k_egfr_dephos': 0.2,
+        'k_her_phos': 0.4,
+        'k_her_dephos': 0.15,
+        'k_igf_phos': 0.3,
+        'k_igf_dephos': 0.2,
+        'w_her3': 1.5
+    }
     k_params = nn.ParameterDict({
-        name: nn.Parameter(torch.tensor(0.5, device=device)) for name in k_names
+        name: nn.Parameter(torch.tensor(value, device=device)) for name, value in param_defaults.items()
     })
     
     # 3. Optimizer and Scheduler
@@ -162,4 +207,3 @@ if __name__ == "__main__":
     }
     
     train_pinn(config)
-
