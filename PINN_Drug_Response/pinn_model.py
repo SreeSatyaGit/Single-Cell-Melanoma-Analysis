@@ -62,17 +62,26 @@ class PINN(nn.Module):
         out = self.output_layer(x)
         return self.softplus(out)
 
-    def predict(self, t_np, drugs_dict, scalers, device='cpu'):
+    def predict(self, t_np, drugs_dict, scalers, device='cpu', normalized=True):
         """
         Utility for inference with numpy inputs.
+        
+        Args:
+            t_np: Time points (numpy array)
+            drugs_dict: Dictionary of drug concentrations
+            scalers: Dictionary containing scaling factors
+            device: 'cpu' or 'cuda'
+            normalized: If True (default), returns results in [0, 1] range.
+                       If False, returns results unnormalized (A.U.).
         """
         self.eval()
         with torch.no_grad():
-            # Prepare time (normalized to 0-48 range)
-            t_norm = t_np / scalers['t_range'].item()
+            # 1. Prepare time (normalized to 0-48 range)
+            t_max = scalers['t_range'].item() if torch.is_tensor(scalers['t_range']) else scalers['t_range']
+            t_norm = t_np / t_max
             t_tensor = torch.tensor(t_norm, dtype=torch.float32).view(-1, 1).to(device)
             
-            # Prepare drugs
+            # 2. Prepare drugs
             drugs_vec = torch.tensor([
                 drugs_dict['vemurafenib'],
                 drugs_dict['trametinib'],
@@ -81,13 +90,14 @@ class PINN(nn.Module):
             ], dtype=torch.float32).view(1, -1).to(device)
             drugs_tensor = drugs_vec.repeat(t_tensor.size(0), 1)
             
-            # Forward pass
+            # 3. Forward pass (outputs are already in [0, 1] due to softplus/training)
             y_pred_norm = self.forward(t_tensor, drugs_tensor)
-            
-            # Unnormalize
             y_pred = y_pred_norm.cpu().numpy()
             
-            # Convert scalers to numpy if they are tensors
+            if normalized:
+                return y_pred
+                
+            # 4. Unnormalize if requested
             y_std = scalers['y_std']
             if torch.is_tensor(y_std):
                 y_std = y_std.cpu().numpy()
@@ -97,5 +107,4 @@ class PINN(nn.Module):
                 y_mean = y_mean.cpu().numpy()
             
             y_pred_unnorm = y_pred * y_std + y_mean
-            
             return y_pred_unnorm

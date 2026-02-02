@@ -47,19 +47,31 @@ def prepare_training_tensors(train_until_hour=8):
     """
     Prepares normalized tensors for training with train/test split.
     
+    NORMALIZATION STRATEGY (Optimized for PINNs):
+    =============================================
+    1. TIME: Normalized to [0, 1] using t_max = 48 hours
+    2. SPECIES: Each species normalized to [0, 1] using GLOBAL max
+       - Using global max (not training max) prevents test values > 1.0
+       - Independent scaling gives equal weight to all proteins in loss
+    3. DRUGS: Kept as-is (already in [0, 1] range)
+    
     Args:
         train_until_hour: Train only on time points <= this value.
                          Default 8 means train on [0,1,4,8], test on [24,48]
     """
-    t_points = TRAINING_DATA_RAW['time_points']
+    t_points = TRAINING_DATA_RAW['time_points'].astype(np.float32)
     num_points = len(t_points)
     
-    # 1. Prepare Y (species data)
-    y_data = np.zeros((num_points, 11))
+    # ==================================================================
+    # 1. PREPARE SPECIES DATA
+    # ==================================================================
+    y_data = np.zeros((num_points, 11), dtype=np.float32)
     for i, species in enumerate(SPECIES_ORDER):
         y_data[:, i] = TRAINING_DATA_RAW['species'][species]
     
-    # 2. Split into train and test
+    # ==================================================================
+    # 2. TRAIN/TEST SPLIT
+    # ==================================================================
     train_mask = t_points <= train_until_hour
     t_train = t_points[train_mask]
     y_train = y_data[train_mask]
@@ -67,52 +79,62 @@ def prepare_training_tensors(train_until_hour=8):
     t_test = t_points[~train_mask]
     y_test = y_data[~train_mask]
     
-    # 3. Normalization - USE MIN-MAX FOR MORE STABILITY
-    # Scale species to [0, 1] based on TRAINING data
-    y_min = np.min(y_train, axis=0)
-    y_max = np.max(y_train, axis=0)
-    y_range = y_max - y_min + 1e-8
+    # ==================================================================
+    # 3. SPECIES NORMALIZATION: [0, 1] using GLOBAL MAX
+    # ==================================================================
+    # Use global max (all data) to prevent test values from exceeding 1.0
+    y_global_max = np.max(y_data, axis=0)  # Max across ALL time points
+    y_global_min = np.zeros_like(y_global_max)  # Min is 0 for biological data
+    y_scale = y_global_max + 1e-8  # Scale factor = max value
     
-    y_train_norm = (y_train - y_min) / y_range
-    y_test_norm = (y_test - y_min) / y_range
+    y_train_norm = y_train / y_scale
+    y_test_norm = y_test / y_scale
     
-    # Scale time to [0, 1] based on FULL range (0-48)
+    # ==================================================================
+    # 4. TIME NORMALIZATION: [0, 1]
+    # ==================================================================
     t_max = 48.0
     t_train_norm = (t_train / t_max).reshape(-1, 1)
     t_test_norm = (t_test / t_max).reshape(-1, 1)
     
-    # 4. Drug concentration (repeated for each time point)
+    # ==================================================================
+    # 5. DRUGS: Keep as-is (already [0, 1])
+    # ==================================================================
     drugs_raw = TRAINING_DATA_RAW['drugs']
     drugs_vec = np.array([
         drugs_raw['vemurafenib'],
         drugs_raw['trametinib'],
         drugs_raw['pi3k_inhibitor'],
         drugs_raw['ras_inhibitor']
-    ])
+    ], dtype=np.float32)
     drugs_train = np.tile(drugs_vec, (len(t_train), 1))
     drugs_test = np.tile(drugs_vec, (len(t_test), 1))
     
-    # 5. Save scalers for later use (mapping Min-Max variables to old names to keep compatibility)
+    # ==================================================================
+    # 6. SCALERS (for physics loss and inference)
+    # ==================================================================
     scalers = {
-        'y_mean': torch.tensor(y_min, dtype=torch.float32),
-        'y_std': torch.tensor(y_range, dtype=torch.float32),
-        't_range': torch.tensor(t_max, dtype=torch.float32)
+        'y_mean': torch.tensor(y_global_min, dtype=torch.float32),  # Min = 0
+        'y_std': torch.tensor(y_scale, dtype=torch.float32),        # Scale = max
+        't_range': torch.tensor(t_max, dtype=torch.float32)         # Time scale = 48
     }
     
     train_data = {
         't': t_train,
         't_norm': t_train_norm,
         'drugs': drugs_train,
-        'y': y_train,
-        'y_norm': y_train_norm
+        'y': y_train_norm,      # Mapping 'y' to normalized for easy plotting
+        'y_norm': y_train_norm, # For backward compatibility
+        'y_raw': y_train        # Original A.U. values
     }
     
     test_data = {
         't': t_test,
         't_norm': t_test_norm,
         'drugs': drugs_test,
-        'y': y_test,
-        'y_norm': y_test_norm
+        'y': y_test_norm,       # Mapping 'y' to normalized
+        'y_norm': y_test_norm,  # Compatibility
+        'y_raw': y_test         # Original
     }
     
     return train_data, test_data, scalers

@@ -48,8 +48,8 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
         ss_tot = np.sum((y_true - np.mean(y_true, axis=0))**2, axis=0)
         return 1 - (ss_res / (ss_tot + 1e-8))
     
-    r2_train = compute_r2(train_data['y'], y_train_pred)
-    r2_test = compute_r2(test_data['y'], y_test_pred)
+    r2_train = compute_r2(train_data['y_norm'], y_train_pred)
+    r2_test = compute_r2(test_data['y_norm'], y_test_pred)
     
     # Create plot
     fig, axes = plt.subplots(4, 3, figsize=(16, 14))
@@ -62,13 +62,13 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
         ax.plot(t_smooth, y_smooth[:, i], 'b-', linewidth=2, label='PINN', alpha=0.8)
         
         # Plot training data points
-        ax.scatter(train_data['t'], train_data['y'][:, i], 
+        ax.scatter(train_data['t'], train_data['y_norm'][:, i], 
                   color='green', s=100, marker='o', 
                   label=f'Train (R²={r2_train[i]:.3f})', 
                   zorder=5, edgecolors='darkgreen', linewidths=2)
         
         # Plot test data points
-        ax.scatter(test_data['t'], test_data['y'][:, i], 
+        ax.scatter(test_data['t'], test_data['y_norm'][:, i], 
                   color='red', s=100, marker='s', 
                   label=f'Test (R²={r2_test[i]:.3f})', 
                   zorder=5, edgecolors='darkred', linewidths=2)
@@ -148,23 +148,30 @@ def generate_prediction_table(model_path='pinn_model_best.pth', save_path='predi
     
     # Combine train and test data
     all_times = np.concatenate([train_data['t'], test_data['t']])
-    all_y_true = np.concatenate([train_data['y'], test_data['y']])
+    all_y_true_norm = np.concatenate([train_data['y_norm'], test_data['y_norm']])
+    all_y_true_raw = np.concatenate([train_data['y_raw'], test_data['y_raw']])
     
-    # Get predictions
-    y_pred = model.predict(all_times, drugs_dict, scalers, device)
+    # Get predictions (normalized and raw)
+    y_pred_norm = model.predict(all_times, drugs_dict, scalers, device, normalized=True)
+    y_pred_raw = model.predict(all_times, drugs_dict, scalers, device, normalized=False)
     
     # Create table
     results = []
     for t_idx, t_val in enumerate(all_times):
         is_train = t_val <= 8
         for species_idx, species in enumerate(SPECIES_ORDER):
+            true_norm = all_y_true_norm[t_idx, species_idx]
+            pred_norm = y_pred_norm[t_idx, species_idx]
+            
             results.append({
                 'Time (hrs)': t_val,
                 'Species': species,
-                'True Value': all_y_true[t_idx, species_idx],
-                'Predicted Value': y_pred[t_idx, species_idx],
-                'Error': all_y_true[t_idx, species_idx] - y_pred[t_idx, species_idx],
-                'Percent Error': 100 * (all_y_true[t_idx, species_idx] - y_pred[t_idx, species_idx]) / (all_y_true[t_idx, species_idx] + 1e-6),
+                'True Value': true_norm,        # Keep standard name for 0-1 range
+                'Predicted Value': pred_norm,   # Keep standard name for 0-1 range
+                'True Value (Raw)': all_y_true_raw[t_idx, species_idx],
+                'Predicted Value (Raw)': y_pred_raw[t_idx, species_idx],
+                'Error': true_norm - pred_norm,
+                'Percent Error': 100 * (true_norm - pred_norm) / (true_norm + 1e-6),
                 'Dataset': 'Train' if is_train else 'Test'
             })
     

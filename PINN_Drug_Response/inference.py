@@ -17,15 +17,15 @@ def load_pinn(filepath, device='cpu'):
     scalers = checkpoint['scalers']
     return model, scalers
 
-def predict_new_combination(model, drugs_dict, scalers, t_range=(0, 48), n_points=200, device='cpu'):
+def predict_new_combination(model, drugs_dict, scalers, t_range=(0, 48), n_points=200, device='cpu', normalized=True):
     """
     Generate predictions for a new drug combination.
     """
     t_eval = np.linspace(t_range[0], t_range[1], n_points)
-    y_pred_unnorm = model.predict(t_eval, drugs_dict, scalers, device)
+    y_pred = model.predict(t_eval, drugs_dict, scalers, device, normalized=normalized)
     
     # Store in DataFrame
-    results = pd.DataFrame(y_pred_unnorm, columns=SPECIES_ORDER)
+    results = pd.DataFrame(y_pred, columns=SPECIES_ORDER)
     results['time'] = t_eval
     return results
 
@@ -46,14 +46,21 @@ def plot_training_fit(model, scalers, device='cpu'):
     fig, axes = plt.subplots(4, 3, figsize=(15, 12))
     axes = axes.flatten()
     
+    # Prepare experimental data (normalize it for plotting)
+    y_exp_norm = {}
+    for species in SPECIES_ORDER:
+        raw_vals = TRAINING_DATA_RAW['species'][species]
+        # Match data_utils normalization: divide by global max
+        y_exp_norm[species] = raw_vals / (np.max(raw_vals) + 1e-8)
+
     for i, species in enumerate(SPECIES_ORDER):
         ax = axes[i]
-        exp_vals = TRAINING_DATA_RAW['species'][species]
+        exp_vals = y_exp_norm[species]
         
         # Plot experimental points
         ax.scatter(t_points, exp_vals, color='red', label='Exp Data', zorder=5)
         
-        # Plot model line
+        # Plot model line (normalized by default)
         ax.plot(t_smooth, y_smooth[:, i], color='blue', label='PINN Fit')
         
         # Compute R2
@@ -63,7 +70,7 @@ def plot_training_fit(model, scalers, device='cpu'):
         
         ax.set_title(f"{species} (R²={r2:.3f})")
         ax.set_xlabel("Time (h)")
-        ax.set_ylabel("Intensity")
+        ax.set_ylabel("Normalized Intensity")
         ax.grid(alpha=0.3)
         if i == 0: ax.legend()
 
