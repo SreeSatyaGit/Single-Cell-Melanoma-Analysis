@@ -163,13 +163,24 @@ def get_collocation_points(n_points=100, extrapolation_weight=2.0):
     
     t_physics = np.concatenate([t_train_region, t_extrap_region]).reshape(-1, 1)
     
-    drugs_raw = TRAINING_DATA_RAW['drugs']
-    drugs_vec = np.array([
-        drugs_raw['vemurafenib'],
-        drugs_raw['trametinib'],
-        drugs_raw['pi3k_inhibitor'],
-        drugs_raw['ras_inhibitor']
-    ])
-    drugs_physics = np.tile(drugs_vec, (len(t_physics), 1))
+    # Randomize drug concentrations for physics training
+    # This is CRITICAL for the model to learn the effect of drugs it hasn't seen in exp data
+    # ranges: [0, 1.0] for all drugs
+    
+    vemurafenib = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
+    trametinib = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
+    pi3k_inhibitor = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
+    ras_inhibitor = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
+    
+    # Also include specific "pure" conditions to ensure boundaries are well-learned
+    # e.g., mix in some cases with 0 drugs, or only 1 drug
+    mask_pure = np.random.rand(len(t_physics)) < 0.2
+    if np.any(mask_pure):
+        vemurafenib[mask_pure] = 0
+        trametinib[mask_pure] = 0
+        pi3k_inhibitor[mask_pure] = 0
+        ras_inhibitor[mask_pure] = 0
+        
+    drugs_physics = np.hstack([vemurafenib, trametinib, pi3k_inhibitor, ras_inhibitor])
     
     return torch.tensor(t_physics, dtype=torch.float32), torch.tensor(drugs_physics, dtype=torch.float32)

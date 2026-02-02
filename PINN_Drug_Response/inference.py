@@ -6,6 +6,7 @@ from pinn_model import PINN
 from data_utils import SPECIES_ORDER, TRAINING_DATA_RAW
 from physics_utils import compute_physics_loss
 import seaborn as sns
+import os
 
 def load_pinn(filepath, device='cpu'):
     checkpoint = torch.load(filepath, map_location=device, weights_only=False)
@@ -82,7 +83,7 @@ def plot_training_fit(model, scalers, device='cpu'):
     plt.savefig('model_fit.png', dpi=300)
     plt.close()
 
-def plot_predictions(train_preds, new_preds, species_to_plot=None):
+def plot_predictions(train_preds, new_preds, species_to_plot=None, filename='prediction_comparison.png', label_new='New Condition'):
     """
     Plots comparison between training condition and new drug condition.
     """
@@ -95,7 +96,7 @@ def plot_predictions(train_preds, new_preds, species_to_plot=None):
     for i, species in enumerate(species_to_plot):
         ax = axes[i]
         ax.plot(train_preds['time'], train_preds[species], '--', color='gray', label='Vem+Tram (Train)')
-        ax.plot(new_preds['time'], new_preds[species], '-', color='green', label='Vem+PI3Ki (New)')
+        ax.plot(new_preds['time'], new_preds[species], '-', color='green', label=label_new)
         
         ax.set_title(species)
         ax.set_xlabel("Time (h)")
@@ -105,9 +106,9 @@ def plot_predictions(train_preds, new_preds, species_to_plot=None):
     if len(axes) > len(species_to_plot):
         axes[-1].axis('off')
         
-    plt.suptitle("Comparison: Training (Vem+Tram) vs Prediction (Vem+PI3Ki)", fontsize=16)
+    plt.suptitle(f"Comparison: Training vs {label_new}", fontsize=16)
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('prediction_comparison.png', dpi=300)
+    plt.savefig(filename, dpi=300)
     plt.close()
 
 def plot_history(history_file):
@@ -137,21 +138,33 @@ if __name__ == "__main__":
     # 2. Plot Training Fit
     plot_training_fit(model, scalers, device)
     
-    # 3. Predict for new combination
-    prediction_drugs = {
+    # 3. Predict for new combination: Vem + PI3Ki
+    vemp_pi3ki_drugs = {
         'vemurafenib': 0.5,
         'trametinib': 0.0,
-        'pi3k_inhibitor': 0.3,
+        'pi3k_inhibitor': 0.3, # Assuming typical dose
         'ras_inhibitor': 0.0
     }
     
-    new_results = predict_new_combination(model, prediction_drugs, scalers, device=device)
-    new_results.to_csv('predictions_pi3ki_vem.csv', index=False)
+    vem_pi3ki_results = predict_new_combination(model, vemp_pi3ki_drugs, scalers, device=device)
+    vem_pi3ki_results.to_csv('predictions_vem_pi3ki.csv', index=False)
     
+    # 4. Predict for new combination: Vem + PanRAS
+    vem_panras_drugs = {
+        'vemurafenib': 0.5,
+        'trametinib': 0.0,
+        'pi3k_inhibitor': 0.0,
+        'ras_inhibitor': 0.3   # Assuming typical dose
+    }
+    
+    vem_panras_results = predict_new_combination(model, vem_panras_drugs, scalers, device=device)
+    vem_panras_results.to_csv('predictions_vem_panras.csv', index=False)
+
     # Generate Training predictions for comparison
     train_results = predict_new_combination(model, TRAINING_DATA_RAW['drugs'], scalers, device=device)
     
-    # 4. Plot Comparisons
-    plot_predictions(train_results, new_results)
+    # 5. Plot Comparisons
+    plot_predictions(train_results, vem_pi3ki_results, filename='comparison_vem_pi3ki.png', label_new='Vem+PI3Ki')
+    plot_predictions(train_results, vem_panras_results, filename='comparison_vem_panras.png', label_new='Vem+PanRAS')
     
     print("Inference and visualization complete.")

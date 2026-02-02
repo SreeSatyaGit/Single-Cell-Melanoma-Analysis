@@ -142,7 +142,13 @@ def train_pinn(config):
         # Backward Pass
         total_loss.backward()
         optimizer.step()
+        optimizer.step()
         scheduler.step()
+        
+        # Resample physics points every epoch for better coverage of the high-dimensional drug space
+        t_physics_raw, drugs_physics_raw = get_collocation_points(config['num_physics_points'])
+        t_physics = t_physics_raw.to(device)
+        drugs_physics = drugs_physics_raw.to(device)
         
         # Evaluate on test set (without gradients)
         model.eval()
@@ -169,21 +175,32 @@ def train_pinn(config):
             })
             
         # Checkpoints/Early Stopping
+        # Checkpoints/Early Stopping
         if total_loss.item() < best_loss:
             best_loss = total_loss.item()
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'k_params_state_dict': k_params.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': total_loss.item(),
-                'scalers': scalers,
-                'train_data': train_data,
-                'test_data': test_data
-            }, 'pinn_model_best.pth')
+            
+            # Save best model
+            save_path = os.path.join(os.getcwd(), 'pinn_model_best.pth')
+            try:
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'k_params_state_dict': k_params.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': total_loss.item(),
+                    'scalers': scalers,
+                    'train_data': train_data,
+                    'test_data': test_data
+                }, save_path)
+            except Exception as e:
+                print(f"Warning: Could not save model to {save_path}: {e}")
 
         if epoch % 500 == 0 and epoch > 0:
-            torch.save({'model_state_dict': model.state_dict(), 'scalers': scalers}, f'checkpoint_{epoch}.pth')
+            ckpt_path = os.path.join(os.getcwd(), f'checkpoint_{epoch}.pth')
+            try:
+                torch.save({'model_state_dict': model.state_dict(), 'scalers': scalers}, ckpt_path)
+            except Exception as e:
+                print(f"Warning: Could not save checkpoint to {ckpt_path}: {e}")
 
     # Save final artifacts
     pd.DataFrame(history).to_csv('training_history.csv', index=False)
@@ -195,7 +212,7 @@ def train_pinn(config):
 
 if __name__ == "__main__":
     config = {
-        'train_until_hour': 8,
+        'train_until_hour': 48,
         'num_epochs': 10000,
         'learning_rate': 0.0005,
         'lr_decay': 0.98,
