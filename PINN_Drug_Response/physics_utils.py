@@ -316,6 +316,34 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
         'p4EBP1': k.get('w_4ebp1', 1.3), # mTOR target
     }
     
+    # ==================================================================
+    # 1. RECEPTOR DYNAMICS (RTK Phosphorylation)
+    # ==================================================================
+    
+    # Negative feedback from ERK to Receptors (from MATLAB ERK_EGFR_effect etc.)
+    k_erk_rtk = k.get('k_erk_rtk', 0.1)
+    ERK_feedback = (k_erk_rtk * pERK) / (k.get('Km_erk_rtk', 0.5) + pERK + 1e-8)
+    
+    # d(pEGFR)/dt
+    # Activation depends on time (stimulus) and baseline EGFR
+    # Inhibition from ERK feedback and dephosphorylation
+    k_egfr_phos = k.get('k_egfr_phos', 0.5)
+    k_egfr_dephos = k.get('k_egfr_dephos', 0.2)
+    res_pEGFR = dy_dt[:, 0] - (
+        k_egfr_phos * (1.0 - pEGFR) - (k_egfr_dephos + ERK_feedback) * pEGFR
+    )
+    
+    # d(HER2)/dt and d(HER3)/dt
+    k_her_phos = k.get('k_her_phos', 0.4)
+    k_her_dephos = k.get('k_her_dephos', 0.15)
+    res_HER2 = dy_dt[:, 1] - (k_her_phos * (1.0 - HER2) - (k_her_dephos + ERK_feedback) * HER2)
+    res_HER3 = dy_dt[:, 2] - (k_her_phos * (1.0 - HER3) - (k_her_dephos + ERK_feedback) * HER3)
+    
+    # d(IGF1R)/dt
+    k_igf_phos = k.get('k_igf_phos', 0.3)
+    k_igf_dephos = k.get('k_igf_dephos', 0.2)
+    res_IGF1R = dy_dt[:, 3] - (k_igf_phos * (1.0 - IGF1R) - (k_igf_dephos + ERK_feedback) * IGF1R)
+    
     physics_loss = (
         weights['pEGFR'] * torch.mean(res_pEGFR**2) +
         weights['HER2'] * torch.mean(res_HER2**2) +

@@ -79,8 +79,7 @@ def train_pinn(config):
         'k_her_phos': 0.4,
         'k_her_dephos': 0.15,
         'k_igf_phos': 0.3,
-        'k_igf_dephos': 0.2,
-        'w_her3': 1.5
+        'k_igf_dephos': 0.2
     }
     k_params = nn.ParameterDict({
         name: nn.Parameter(torch.tensor(value, device=device)) for name, value in param_defaults.items()
