@@ -91,6 +91,7 @@ This will:
 - `predictions_table.csv` - Detailed predictions with errors
 - `training_history.csv` - Loss values per epoch
 - `training_config.json` - Hyperparameters
+- `predictions/` - Directory for combination prediction CSVs
 
 ### Visualization Only
 
@@ -99,6 +100,33 @@ If you already have a trained model:
 ```bash
 python visualize_extrapolation.py
 ```
+
+### Predict New Drug Combinations and Dosages
+
+After training on the full 0–48h range, run inference on any number of drug combinations
+by providing a CSV file with concentrations:
+
+```bash
+python inference.py --model pinn_model_best.pth --combos-csv example_drug_combinations.csv --output-dir predictions
+```
+
+Each row is a drug combination with dosage values in [0, 1]. Columns required:
+
+```csv
+name,vemurafenib,trametinib,pi3k_inhibitor,ras_inhibitor
+Vem_0.5_Tram_0.3,0.5,0.3,0.0,0.0
+Vem_0.5_PI3Ki_0.3,0.5,0.0,0.3,0.0
+```
+
+The script writes:
+- `predictions/predictions_<name>.csv` for each combination
+- `predictions/predictions_all_combos.csv` with long-form results
+
+Optional flags:
+- `--t-min` / `--t-max`: prediction window (default 0–48)
+- `--n-points`: number of time points (default 200)
+- `--unnormalized`: output raw A.U. values instead of normalized
+- `--skip-plots`: skip training-fit plots during inference
 
 ## Model Architecture
 
