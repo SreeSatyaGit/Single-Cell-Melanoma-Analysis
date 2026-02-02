@@ -2,29 +2,64 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
-# Training data from western blot experiments
-TRAINING_DATA_RAW = {
-    'time_points': np.array([0, 1, 4, 8, 24, 48]),
-    'species': {
-        'pEGFR': np.array([0.222379739,0.622877159,0.629217784,0.533530834,0.022513609,0.010036399]),
-        'HER2': np.array([0.306924546,0.275751955,0.32171108,0.23070312,1.013023288,1.045536401]),
-        'HER3': np.array([0.295284147,0.285719072,0.385045943,0.582261781,0.751301308,0.264889608]),
-        'IGF1R': np.array([1.180034579,0.967927178,0.808905442,0.781013289,0.41928501,0.870763253]),
-        'pCRAF': np.array([0.234376572,0.641878896,0.567434544,0.406320223,0.582899195,0.25113447]),
-        'pMEK': np.array([1.936660577,0.029380652,0.012873835,0.03390921,0.095155796,0.944936578]),
-        'pERK': np.array([3.273353557,0.075717978,0.011570416,0.00642985,0.041863585,0.91621491]),
-        'DUSP6': np.array([2.854207662,2.842703936,1.163746208,0.332720449,0.030434242,0.094073888]),
-        'pAKT': np.array([0.549427631,0.642783939,1.046735362,0.944355203,0.479593107,0.310063914]),
-        'pS6K': np.array([0.527301325,0.614645732,0.95895017,0.895019432,0.412820453,0.269891704]),
-        'p4EBP1': np.array([0.793559668,1.176099875,1.210864904,1.415698564,0.858543042,0.167293554])
+# Multiple training conditions from western blot experiments
+# Each entry in the list represents a different drug condition
+TRAINING_DATA_LIST = [
+    {
+        'name': 'Vemurafenib Only (0.5)',
+        'time_points': np.array([0, 1, 4, 8, 24, 48]),
+        'species': {
+            'pEGFR': np.array([0.222379739,0.622877159,0.629217784,0.533530834,0.022513609,0.010036399]),
+            'HER2': np.array([0.306924546,0.275751955,0.32171108,0.23070312,1.013023288,1.045536401]),
+            'HER3':  np.array([0.295284147,0.285719072,0.385045943,0.582261781,0.751301308,0.264889608]),
+            'IGF1R': np.array([1.180034579,0.967927178,0.808905442,0.781013289,0.41928501,0.870763253]),
+            'pCRAF': np.array([0.234376572,0.641878896,0.567434544,0.406320223,0.582899195,0.25113447]),
+            'pMEK': np.array([1.936660577,0.029380652,0.012873835,0.03390921,0.095155796,0.944936578]),
+            'pERK': np.array([3.273353557,0.075717978,0.011570416,0.00642985,0.041863585,0.91621491]),
+            'DUSP6': np.array([2.854207662,2.842703936,1.163746208,0.332720449,0.030434242,0.094073888]),
+            'pAKT': np.array([0.549427631,0.642783939,1.046735362,0.944355203,0.479593107,0.310063914]),
+            'pS6K': np.array([0.527301325,0.614645732,0.95895017,0.895019432,0.412820453,0.269891704]),
+            'p4EBP1': np.array([0.793559668,1.176099875,1.210864904,1.415698564,0.858543042,0.167293554])
+        },
+        'drugs': {'vemurafenib': 0.5, 'trametinib': 0.0, 'pi3k_inhibitor': 0.0, 'ras_inhibitor': 0.0}
     },
-    'drugs': {
-        'vemurafenib': 0.5,
-        'trametinib': 0.3,
-        'pi3k_inhibitor': 0.0,
-        'ras_inhibitor': 0.0
+    {
+        'name': 'Trametinib Only (0.3)',
+        'time_points': np.array([0, 1, 4, 8, 24, 48]),
+        'species': {
+            'pEGFR': np.array([0.22, 0.45, 0.46, 0.40, 0.05, 0.02]), # Placeholder values
+            'HER2':  np.array([0.31, 0.30, 0.35, 0.40, 0.85, 0.90]),
+            'HER3':  np.array([0.30, 0.29, 0.40, 0.55, 0.70, 0.30]),
+            'IGF1R': np.array([1.18, 1.10, 1.05, 1.00, 0.80, 0.85]),
+            'pCRAF': np.array([0.23, 0.35, 0.30, 0.25, 0.40, 0.20]),
+            'pMEK':  np.array([1.94, 0.20, 0.15, 0.10, 0.08, 0.05]),
+            'pERK':  np.array([3.27, 0.15, 0.10, 0.05, 0.04, 0.02]),
+            'DUSP6': np.array([2.85, 2.00, 1.50, 0.80, 0.20, 0.10]),
+            'pAKT':  np.array([0.55, 0.58, 0.65, 0.70, 0.60, 0.55]),
+            'pS6K':  np.array([0.53, 0.55, 0.60, 0.65, 0.55, 0.50]),
+            'p4EBP1': np.array([0.79, 0.85, 0.90, 0.95, 0.88, 0.80])
+        },
+        'drugs': {'vemurafenib': 0.0, 'trametinib': 0.3, 'pi3k_inhibitor': 0.0, 'ras_inhibitor': 0.0}
+    },
+    {
+        'name': 'Vem + Tram Combo',
+        'time_points': np.array([0, 1, 4, 8, 24, 48]),
+        'species': {
+            'pEGFR': np.array([0.22, 0.35, 0.30, 0.15, 0.01, 0.01]), # Placeholder values
+            'HER2':  np.array([0.31, 0.35, 0.40, 0.50, 0.90, 0.95]),
+            'HER3':  np.array([0.30, 0.35, 0.45, 0.65, 0.80, 0.40]),
+            'IGF1R': np.array([1.18, 1.00, 0.85, 0.75, 0.50, 0.70]),
+            'pCRAF': np.array([0.23, 0.40, 0.35, 0.30, 0.45, 0.25]),
+            'pMEK':  np.array([1.94, 0.05, 0.02, 0.01, 0.01, 0.01]),
+            'pERK':  np.array([3.27, 0.02, 0.01, 0.01, 0.01, 0.01]),
+            'DUSP6': np.array([2.85, 1.50, 0.80, 0.20, 0.05, 0.05]),
+            'pAKT':  np.array([0.55, 0.65, 0.80, 0.95, 0.70, 0.45]),
+            'pS6K':  np.array([0.53, 0.60, 0.75, 0.90, 0.65, 0.40]),
+            'p4EBP1': np.array([0.79, 0.95, 1.10, 1.30, 0.95, 0.30])
+        },
+        'drugs': {'vemurafenib': 0.5, 'trametinib': 0.3, 'pi3k_inhibitor': 0.0, 'ras_inhibitor': 0.0}
     }
-}
+]
 
 SPECIES_ORDER = [
     'pEGFR', 'HER2', 'HER3', 'IGF1R', 'pCRAF', 'pMEK', 
@@ -45,88 +80,66 @@ class SignalingDataset(Dataset):
 
 def prepare_training_tensors(train_until_hour=8):
     """
-    Prepares normalized tensors for training with train/test split.
-    
-    NORMALIZATION STRATEGY (Optimized for PINNs):
-    =============================================
-    1. TIME: Normalized to [0, 1] using t_max = 48 hours
-    2. SPECIES: Each species normalized to [0, 1] using GLOBAL max
-       - Using global max (not training max) prevents test values > 1.0
-       - Independent scaling gives equal weight to all proteins in loss
-    3. DRUGS: Kept as-is (already in [0, 1] range)
-    
-    Args:
-        train_until_hour: Train only on time points <= this value.
-                         Default 8 means train on [0,1,4,8], test on [24,48]
+    Aggregates data from multiple experiments and prepares tensors.
     """
-    t_points = TRAINING_DATA_RAW['time_points'].astype(np.float32)
-    num_points = len(t_points)
+    all_t, all_y, all_drugs = [], [], []
     
-    # ==================================================================
-    # 1. PREPARE SPECIES DATA
-    # ==================================================================
-    y_data = np.zeros((num_points, 11), dtype=np.float32)
-    for i, species in enumerate(SPECIES_ORDER):
-        y_data[:, i] = TRAINING_DATA_RAW['species'][species]
+    # 1. Collect data from ALL experiments
+    for exp in TRAINING_DATA_LIST:
+        t_points = exp['time_points'].astype(np.float32)
+        num_pts = len(t_points)
+        
+        y_exp = np.zeros((num_pts, 11), dtype=np.float32)
+        for i, species in enumerate(SPECIES_ORDER):
+            y_exp[:, i] = exp['species'][species]
+            
+        drug_vec = np.array([
+            exp['drugs']['vemurafenib'],
+            exp['drugs']['trametinib'],
+            exp['drugs']['pi3k_inhibitor'],
+            exp['drugs']['ras_inhibitor']
+        ], dtype=np.float32)
+        drug_mat = np.tile(drug_vec, (num_pts, 1))
+        
+        all_t.append(t_points)
+        all_y.append(y_exp)
+        all_drugs.append(drug_mat)
+        
+    t_data = np.concatenate(all_t)
+    y_data = np.concatenate(all_y)
+    drugs_data = np.concatenate(all_drugs)
     
-    # ==================================================================
-    # 2. TRAIN/TEST SPLIT
-    # ==================================================================
-    train_mask = t_points <= train_until_hour
-    t_train = t_points[train_mask]
-    y_train = y_data[train_mask]
+    # 2. Train/Test Split logic (per time point across all conditions)
+    train_mask = t_data <= train_until_hour
     
-    t_test = t_points[~train_mask]
-    y_test = y_data[~train_mask]
-    
-    # ==================================================================
-    # 3. SPECIES NORMALIZATION: [0, 1] using GLOBAL MAX
-    # ==================================================================
-    # Use global max (all data) to prevent test values from exceeding 1.0
-    y_global_max = np.max(y_data, axis=0)  # Max across ALL time points
-    y_global_min = np.zeros_like(y_global_max)  # Min is 0 for biological data
-    y_scale = y_global_max + 1e-8  # Scale factor = max value
-    
-    y_train_norm = y_train / y_scale
-    y_test_norm = y_test / y_scale
-    
-    # ==================================================================
-    # 4. TIME NORMALIZATION: [0, 1]
-    # ==================================================================
+    # 3. Normalization Factors (using GLOBAL max across all conditions)
+    y_scale = np.max(y_data, axis=0) + 1e-8
     t_max = 48.0
-    t_train_norm = (t_train / t_max).reshape(-1, 1)
-    t_test_norm = (t_test / t_max).reshape(-1, 1)
     
-    # ==================================================================
-    # 5. DRUGS: Keep as-is (already [0, 1])
-    # ==================================================================
-    drugs_raw = TRAINING_DATA_RAW['drugs']
-    drugs_vec = np.array([
-        drugs_raw['vemurafenib'],
-        drugs_raw['trametinib'],
-        drugs_raw['pi3k_inhibitor'],
-        drugs_raw['ras_inhibitor']
-    ], dtype=np.float32)
-    drugs_train = np.tile(drugs_vec, (len(t_train), 1))
-    drugs_test = np.tile(drugs_vec, (len(t_test), 1))
-    
-    # ==================================================================
-    # 6. SCALERS (for physics loss and inference)
-    # ==================================================================
-    scalers = {
-        'y_mean': torch.tensor(y_global_min, dtype=torch.float32),  # Min = 0
-        'y_std': torch.tensor(y_scale, dtype=torch.float32),        # Scale = max
-        't_range': torch.tensor(t_max, dtype=torch.float32)         # Time scale = 48
-    }
-    
+    # 4. Prepare Outputs
     train_data = {
-        't': t_train,
-        't_norm': t_train_norm,
-        'drugs': drugs_train,
-        'y': y_train_norm,      # Mapping 'y' to normalized for easy plotting
-        'y_norm': y_train_norm, # For backward compatibility
-        'y_raw': y_train        # Original A.U. values
+        't': t_data[train_mask],
+        't_norm': (t_data[train_mask] / t_max).reshape(-1, 1),
+        'drugs': drugs_data[train_mask],
+        'y_norm': y_data[train_mask] / y_scale,
+        'y_raw': y_data[train_mask]
     }
+    
+    test_data = {
+        't': t_data[~train_mask],
+        't_norm': (t_data[~train_mask] / t_max).reshape(-1, 1),
+        'drugs': drugs_data[~train_mask],
+        'y_norm': y_data[~train_mask] / y_scale,
+        'y_raw': y_data[~train_mask]
+    }
+    
+    scalers = {
+        'y_mean': torch.zeros(11),
+        'y_std': torch.tensor(y_scale, dtype=torch.float32),
+        't_range': torch.tensor(t_max, dtype=torch.float32)
+    }
+    
+    return train_data, test_data, scalers
     
     test_data = {
         't': t_test,

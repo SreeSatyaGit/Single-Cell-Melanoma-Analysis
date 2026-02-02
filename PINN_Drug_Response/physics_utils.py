@@ -214,67 +214,59 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # ---------------------- MAPK Pathway ODEs ----------------------
     
     # d(pCRAF)/dt
-    # Activation: RTK signaling, paradoxical Vem activation
+    # Activation: RTK signaling, paradoxical Vem activation | Targets pool (1 - pCRAF)
     # Inhibition: Vemurafenib, AKT feedback, degradation
     k_craf_act = k.get('k_craf_act', 1.2)
     k_craf_deg = k.get('k_craf_deg', 0.35)
     
     res_pCRAF = dy_dt[:, 4] - (
-        k_craf_act * RAS_GTP * (1.0 - Vem_inhibition)
-        + Vem_activation  # Paradoxical activation
-        - k_craf_deg * pCRAF
-        - AKT_to_RAF_inhibition * pCRAF  # AKT negative crosstalk
+        (k_craf_act * RAS_GTP * (1.0 - Vem_inhibition) + Vem_activation) * (1.0 - pCRAF)
+        - (k_craf_deg + AKT_to_RAF_inhibition) * pCRAF
     )
     
     # d(pMEK)/dt
-    # Activation: pCRAF, AKT promotion (context-dependent)
+    # Activation: pCRAF, AKT promotion | Targets pool (1 - pMEK)
     # Inhibition: Tramametinib, degradation, substrate inhibition
     k_mek_act = k.get('k_mek_act', 1.0)
     k_mek_deg = k.get('k_mek_deg', 0.4)
     
     res_pMEK = dy_dt[:, 5] - (
-        k_mek_act * pCRAF * (1.0 - Tram_effect) * (1.0 - AKT_to_RAF_inhibition)
-        + AKT_to_MEK_promotion  # AKT can promote MEK under some conditions
-        - k_mek_deg * pMEK
-        - MEK_substrate_inhibition * pMEK  # Product inhibition
+        (k_mek_act * pCRAF * (1.0 - Tram_effect) * (1.0 - AKT_to_RAF_inhibition) + AKT_to_MEK_promotion) * (1.0 - pMEK)
+        - (k_mek_deg + MEK_substrate_inhibition) * pMEK
     )
     
     # d(pERK)/dt
-    # Activation: pMEK
-    # Inhibition: DUSP6 (negative feedback), degradation
+    # Activation: pMEK | Targets pool (1 - pERK)
+    # Inhibition: DUSP6 (phosphatase-mediated dephos), degradation
     k_erk_act = k.get('k_erk_act', 1.2)
     k_erk_deg = k.get('k_erk_deg', 0.45)
     
     res_pERK = dy_dt[:, 6] - (
-        k_erk_act * pMEK * (1.0 - DUSP6_inhibition)  # DUSP6 negative feedback
-        - k_erk_deg * pERK
+        k_erk_act * pMEK * (1.0 - pERK) 
+        - (k_erk_deg + DUSP6_inhibition) * pERK
     )
     
     # d(DUSP6)/dt
-    # Synthesis: ERK-dependent (positive feedback creating negative loop)
-    # Degradation: constitutive
+    # Synthesis: ERK-dependent | Net synthesis minus degradation
     res_pDUSP6 = dy_dt[:, 7] - (
-        DUSP6_synthesis  # Cooperative ERK-dependent synthesis
-        - k_dusp_deg * DUSP6
+        DUSP6_synthesis - k_dusp_deg * DUSP6
     )
     
     # ---------------------- PI3K Pathway ODEs ----------------------
     
     # d(pAKT)/dt
-    # Activation: RTK→PI3K, compensatory RAF activation
-    # Inhibition: PI3Ki, degradation, mTOR feedbacks
+    # Activation: PI3K input, RAF crosstalk | Targets pool (1 - pAKT)
+    # Inhibition: PI3Ki, degradation, S6K feedback
     k_akt_act = k.get('k_akt_act', 1.0)
     k_akt_deg = k.get('k_akt_deg', 0.4)
     
     res_pAKT = dy_dt[:, 8] - (
-        k_akt_act * PI3K_total_input * (1.0 - PI3Ki_effect)
-        - k_akt_deg * pAKT
-        - mTOR_total_feedback * pAKT  # S6K negative feedback
+        k_akt_act * (PI3K_total_input) * (1.0 - PI3Ki_effect) * (1.0 - pAKT)
+        - (k_akt_deg + mTOR_total_feedback) * pAKT
     )
     
     # d(pS6K)/dt
-    # Activation: pAKT (via mTORC1)
-    # Inhibition: degradation, 4EBP1 competition
+    # Activation: mTOR (AKT-dependent) | Targets pool (1 - pS6K)
     k_s6k_act = k.get('k_s6k_act', 0.9)
     k_s6k_deg = k.get('k_s6k_deg', 0.5)
     
@@ -282,18 +274,17 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     mTOR_activity = pAKT * (1.0 - mTOR_4EBP1_competition)
     
     res_pS6K = dy_dt[:, 9] - (
-        k_s6k_act * mTOR_activity
+        k_s6k_act * mTOR_activity * (1.0 - pS6K)
         - k_s6k_deg * pS6K
     )
     
     # d(p4EBP1)/dt
-    # Activation: pAKT (via mTORC1)
-    # Inhibition: degradation
+    # Activation: AKT/mTOR | Targets pool (1 - p4EBP1)
     k_4ebp1_act = k.get('k_4ebp1_act', 0.85)
     k_4ebp1_deg = k.get('k_4ebp1_deg', 0.45)
     
     res_p4EBP1 = dy_dt[:, 10] - (
-        k_4ebp1_act * pAKT
+        k_4ebp1_act * pAKT * (1.0 - p4EBP1)
         - k_4ebp1_deg * p4EBP1
     )
     

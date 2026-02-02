@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from pinn_model import PINN
-from data_utils import SPECIES_ORDER, TRAINING_DATA_RAW
+from data_utils import SPECIES_ORDER, TRAINING_DATA_LIST
 from physics_utils import compute_physics_loss
 import seaborn as sns
 import os
@@ -34,8 +34,8 @@ def plot_training_fit(model, scalers, device='cpu'):
     """
     Plots model predictions vs experimental training data.
     """
-    t_points = TRAINING_DATA_RAW['time_points']
-    drugs_train = TRAINING_DATA_RAW['drugs']
+    t_points = TRAINING_DATA_LIST[0]['time_points']
+    drugs_train = TRAINING_DATA_LIST[0]['drugs']
     
     # Generate smooth predictions for plotting
     t_smooth = np.linspace(0, 48, 200)
@@ -50,7 +50,7 @@ def plot_training_fit(model, scalers, device='cpu'):
     # Prepare experimental data (normalize it for plotting)
     y_exp_norm = {}
     for species in SPECIES_ORDER:
-        raw_vals = TRAINING_DATA_RAW['species'][species]
+        raw_vals = TRAINING_DATA_LIST[0]['species'][species]
         # Match data_utils normalization: divide by global max
         y_exp_norm[species] = raw_vals / (np.max(raw_vals) + 1e-8)
 
@@ -161,7 +161,7 @@ if __name__ == "__main__":
     vem_panras_results.to_csv('predictions_vem_panras.csv', index=False)
 
     # Generate Training predictions for comparison
-    train_results = predict_new_combination(model, TRAINING_DATA_RAW['drugs'], scalers, device=device)
+    train_results = predict_new_combination(model, TRAINING_DATA_LIST[0]['drugs'], scalers, device=device)
     
     # 5. Plot Comparisons
     plot_predictions(train_results, vem_pi3ki_results, filename='comparison_vem_pi3ki.png', label_new='Vem+PI3Ki')

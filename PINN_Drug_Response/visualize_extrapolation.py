@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from pinn_model import PINN
-from data_utils import SPECIES_ORDER, TRAINING_DATA_RAW
+from data_utils import SPECIES_ORDER, TRAINING_DATA_LIST
 import seaborn as sns
 
 def load_pinn_with_data(filepath, device='cpu'):
@@ -30,8 +30,7 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
     model, scalers, train_data, test_data = load_pinn_with_data(model_path, device)
     model.eval()
     has_test_data = test_data is not None and len(test_data['t']) > 0
-    
-    drugs_dict = TRAINING_DATA_RAW['drugs']
+    drugs_dict = TRAINING_DATA_LIST[0]['drugs']
     
     # Generate smooth predictions from 0 to 48 hours
     t_smooth = np.linspace(0, 48, 200)
@@ -157,8 +156,7 @@ def generate_prediction_table(model_path='pinn_model_best.pth', save_path='predi
     """Generate detailed prediction table."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model, scalers, train_data, test_data = load_pinn_with_data(model_path, device)
-    
-    drugs_dict = TRAINING_DATA_RAW['drugs']
+    drugs_dict = TRAINING_DATA_LIST[0]['drugs']
     
     # Combine train and test data
     has_test_data = test_data is not None and len(test_data['t']) > 0
