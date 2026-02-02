@@ -127,6 +127,7 @@ Optional flags:
 - `--n-points`: number of time points (default 200)
 - `--unnormalized`: output raw A.U. values instead of normalized
 - `--skip-plots`: skip training-fit plots during inference
+- `--plot-comparisons`: plot training vs combo predictions (saved in the output directory)
 
 ## Model Architecture
 

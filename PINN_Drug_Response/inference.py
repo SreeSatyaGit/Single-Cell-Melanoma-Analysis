@@ -55,10 +55,12 @@ def predict_combinations_to_csv(
     n_points=200,
     device='cpu',
     normalized=True,
-    output_dir='predictions'
+    output_dir='predictions',
+    return_results=False
 ):
     os.makedirs(output_dir, exist_ok=True)
     combined_rows = []
+    results_by_label = []
     for idx, row in combos_df.iterrows():
         label = row['name'] if 'name' in combos_df.columns else f"combo_{idx + 1}"
         label_safe = _sanitize_label(label)
@@ -81,10 +83,15 @@ def predict_combinations_to_csv(
         long_results = results.melt(id_vars=['time'], var_name='species', value_name='value')
         long_results['combo'] = label
         combined_rows.append(long_results)
+        results_by_label.append((label, label_safe, results))
 
     if combined_rows:
         combined_df = pd.concat(combined_rows, ignore_index=True)
         combined_df.to_csv(os.path.join(output_dir, 'predictions_all_combos.csv'), index=False)
+
+    if return_results:
+        return results_by_label
+    return None
 
 def plot_training_fit(model, scalers, device='cpu'):
     """
@@ -192,6 +199,7 @@ if __name__ == "__main__":
     parser.add_argument('--n-points', type=int, default=200, help='Number of time points to evaluate.')
     parser.add_argument('--unnormalized', action='store_true', help='Output predictions in raw A.U. scale.')
     parser.add_argument('--skip-plots', action='store_true', help='Skip plot generation for training fit.')
+    parser.add_argument('--plot-comparisons', action='store_true', help='Generate comparison plots for combos CSV.')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -208,7 +216,7 @@ if __name__ == "__main__":
 
     if args.combos_csv:
         combos_df = load_drug_combinations(args.combos_csv)
-        predict_combinations_to_csv(
+        combo_results = predict_combinations_to_csv(
             model,
             combos_df,
             scalers,
@@ -216,8 +224,22 @@ if __name__ == "__main__":
             n_points=args.n_points,
             device=device,
             normalized=normalized,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            return_results=args.plot_comparisons and not args.skip_plots
         )
+        if args.plot_comparisons and not args.skip_plots:
+            train_results = predict_new_combination(
+                model,
+                TRAINING_DATA_RAW['drugs'],
+                scalers,
+                t_range=t_range,
+                n_points=args.n_points,
+                device=device,
+                normalized=normalized
+            )
+            for label, label_safe, results in combo_results:
+                filename = os.path.join(args.output_dir, f"comparison_{label_safe}.png")
+                plot_predictions(train_results, results, filename=filename, label_new=label)
         print(f"Saved predictions for {len(combos_df)} combinations to {args.output_dir}.")
     else:
         # Backwards-compatible single predictions + plots
