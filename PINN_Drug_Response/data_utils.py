@@ -272,8 +272,23 @@ def get_collocation_points(n_points=100, train_until_hour=48, t_max=48.0):
         ras_inhibitor[mask_pure] = 0
         
     drugs_physics = np.hstack([vemurafenib, trametinib, pi3k_inhibitor, ras_inhibitor])
+
+    # Add explicit combo anchors to avoid blind spots at Vem+Tram
+    combo_times = np.array([0.0, 1.0, 4.0, 8.0, 24.0, 48.0], dtype=np.float32).reshape(-1, 1)
+    combo_times = combo_times / t_max
+    combo_drugs = np.array([
+        [1.0, 1.0, 0.0, 0.0],
+        [0.5, 0.5, 0.0, 0.0],
+        [1.0, 0.5, 0.0, 0.0],
+        [0.5, 1.0, 0.0, 0.0],
+    ], dtype=np.float32)
+    combo_drugs = np.repeat(combo_drugs, combo_times.shape[0], axis=0)
+    combo_times = np.tile(combo_times, (4, 1))
     
     # Normalize time
     t_physics_norm = t_physics / t_max
+
+    t_all = np.vstack([t_physics_norm, combo_times])
+    drugs_all = np.vstack([drugs_physics, combo_drugs])
     
-    return torch.tensor(t_physics_norm, dtype=torch.float32), torch.tensor(drugs_physics, dtype=torch.float32)
+    return torch.tensor(t_all, dtype=torch.float32), torch.tensor(drugs_all, dtype=torch.float32)

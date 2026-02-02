@@ -26,7 +26,7 @@ class PINN(nn.Module):
     Physics-Informed Neural Network for Cancer Signaling Pathways.
     Uses residual connections and Swish activation for better extrapolation.
     """
-    def __init__(self, input_size=5, hidden_size=128, output_size=11, num_hidden=4):
+    def __init__(self, input_size=6, hidden_size=128, output_size=11, num_hidden=4):
         super(PINN, self).__init__()
         
         # Input projection
@@ -53,7 +53,8 @@ class PINN(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, t, drugs):
-        x = torch.cat([t, drugs], dim=1)
+        vem_tram_interaction = (drugs[:, 0:1] * drugs[:, 1:2])
+        x = torch.cat([t, drugs, vem_tram_interaction], dim=1)
         x = self.activation(self.input_layer(x))
         
         for block in self.res_blocks:
