@@ -12,7 +12,7 @@ def load_pinn(filepath, device='cpu'):
     checkpoint = torch.load(filepath, map_location=device, weights_only=False)
     # Auto-detect hidden_size from checkpoint
     state_dict = checkpoint['model_state_dict']
-    hidden_size = state_dict['input_layer.weight'].shape[0]
+    hidden_size = state_dict['res_blocks.0.fc1.weight'].shape[0]
     model = PINN(input_size=5, hidden_size=hidden_size, output_size=11).to(device)
     model.load_state_dict(state_dict)
     scalers = checkpoint['scalers']

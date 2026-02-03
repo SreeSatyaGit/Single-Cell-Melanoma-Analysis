@@ -7,57 +7,86 @@ class Swish(nn.Module):
     def forward(self, x):
         return x * torch.sigmoid(x)
 
-class ResidualBlock(nn.Module):
-    """Residual block for better gradient flow"""
+class GatedResidualBlock(nn.Module):
+    """Gated Residual Block with adaptive weighting for subtle signal capture."""
     def __init__(self, hidden_size):
-        super(ResidualBlock, self).__init__()
+        super(GatedResidualBlock, self).__init__()
         self.fc1 = nn.Linear(hidden_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.activation = Swish()
+        self.gate = nn.Linear(hidden_size, hidden_size)
+        self.activation = nn.SiLU()  # Swish (SiLU) activation
+        self.ln = nn.LayerNorm(hidden_size) # Normalize for deep stability
         
     def forward(self, x):
         residual = x
         out = self.activation(self.fc1(x))
         out = self.fc2(out)
-        return self.activation(out + residual)
+        
+        # Gating mechanism: decides how much signal "flows"
+        gate_weights = torch.sigmoid(self.gate(x))
+        out = out * gate_weights
+        
+        return self.ln(out + residual)
 
 class PINN(nn.Module):
     """
-    Physics-Informed Neural Network for Cancer Signaling Pathways.
-    Uses residual connections and Swish activation for better extrapolation.
+    Advanced Physics-Informed Neural Network.
+    Features: Multi-path input embedding, Gated Residual blocks, and LayerNorm.
     """
-    def __init__(self, input_size=5, hidden_size=128, output_size=11, num_hidden=4):
+    def __init__(self, input_size=5, hidden_size=256, output_size=11, num_hidden=6):
         super(PINN, self).__init__()
         
-        # Input projection
-        self.input_layer = nn.Linear(input_size, hidden_size)
-        self.activation = Swish()
+        # 1. Input Processing Paths
+        # Path for Time (Temporal dynamics)
+        self.time_embed = nn.Sequential(
+            nn.Linear(1, hidden_size // 4),
+            nn.SiLU()
+        )
+        # Path for Drugs (Context/Perturbation)
+        self.drug_embed = nn.Sequential(
+            nn.Linear(4, hidden_size - (hidden_size // 4)),
+            nn.SiLU()
+        )
         
-        # Residual blocks
+        # 2. Main Processing Core (Deeper & Gated)
         self.res_blocks = nn.ModuleList([
-            ResidualBlock(hidden_size) for _ in range(num_hidden)
+            GatedResidualBlock(hidden_size) for _ in range(num_hidden)
         ])
         
-        # Output layer
+        # 3. Dedicated pMEK/pERK attention bridge
+        # Helps link the hierarchical nature of the MAPK cascade
+        self.mapk_attention = nn.Linear(hidden_size, hidden_size)
+        
+        # 4. Output Logic
         self.output_layer = nn.Linear(hidden_size, output_size)
         self.softplus = nn.Softplus()
         
-        # Initialize weights with smaller values for stability
         self._init_weights()
         
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight, gain=0.5)
+                nn.init.orthogonal_(m.weight, gain=1.0)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+        
+        # SPECIAL BIOLOGICAL INITIALIZATION
+        # Initialize output bias to 0.5 so predictions start near the biological mean
+        # rather than at the Softplus floor (near zero).
+        nn.init.constant_(self.output_layer.bias, 0.5)
 
     def forward(self, t, drugs):
-        x = torch.cat([t, drugs], dim=1)
-        x = self.activation(self.input_layer(x))
+        # Multi-path embedding fusion
+        t_feat = self.time_embed(t)
+        d_feat = self.drug_embed(drugs)
+        x = torch.cat([t_feat, d_feat], dim=1)
         
+        # Residual processing
         for block in self.res_blocks:
             x = block(x)
+            
+        # Subtle non-linear transformation for high-order relations
+        x = x + torch.tanh(self.mapk_attention(x))
             
         out = self.output_layer(x)
         return self.softplus(out)
