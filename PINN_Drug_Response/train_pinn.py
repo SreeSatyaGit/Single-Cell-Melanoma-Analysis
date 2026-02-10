@@ -16,7 +16,7 @@ def train_pinn(config):
     print(f"Training on {device}")
     
     # 1. Data Preparation
-    train_until_hour = config.get('train_until_hour', 8)
+    train_until_hour = config.get('train_until_hour', 48)
     train_data, test_data, scalers = prepare_training_tensors(train_until_hour=train_until_hour)
     
     print(f"Aggregated Training points: {len(train_data['t'])}")
@@ -102,7 +102,7 @@ def train_pinn(config):
         # --- (d) Conservation & Parameter Sparsity ---
         l_conservation = compute_conservation_loss(y_pred, scalers_device)
         
-        # L1 Regularization on k_params (Favors biologically simple models)
+        # L1 Regularization on k_params
         l_sparsity = sum(torch.abs(p) for p in k_params.parameters())
         
         # Total Weighted Loss
