@@ -56,58 +56,51 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     Vem = drugs[:, 0]
     Tram = drugs[:, 1]
     PI3Ki = drugs[:, 2]
+    RasInh = drugs[:, 3]
     
     # Kinetic parameters with defaults
     k = k_params
-    Km = k.get('Km', 0.5)  # Michaelis-Menten constant
-    IC50 = k.get('IC50', 0.5)  # Half-maximal inhibitory concentration
-    n = k.get('hill_coeff', 2.0)  # Hill coefficient for cooperativity
+    Km = k.get('Km', 0.5)
+    IC50 = k.get('IC50', 0.5)
+    n = k.get('hill_coeff', 2.0)
     
     # ==================================================================
     # DRUG EFFECTS - Hill equation with dose-response
     # ==================================================================
     
-    # Tramametinib inhibits MEK (MEK inhibitor)
+    # Tramametinib inhibits MEK
     Tram_effect = (Tram**n) / (IC50**n + Tram**n + 1e-8)
     
     # PI3K inhibitor
     PI3Ki_effect = (PI3Ki**n) / (IC50**n + PI3Ki**n + 1e-8)
     
+    # RAS Inhbiitor
+    Ras_effect = (RasInh**n) / (IC50**n + RasInh**n + 1e-8)
+    
     # Vemurafenib (BRAF inhibitor) - includes paradoxical activation
-    # At low doses: can activate RAF (paradoxical activation)
-    # At high doses: strong inhibition
     IC50_vem = k.get('IC50_vem', 0.8)
     Vem_inhibition = (Vem**n) / (IC50_vem**n + Vem**n + 1e-8)
     
-    # Paradoxical activation: bell-shaped curve peaking at intermediate doses
     k_paradox = k.get('k_vem_paradox', 0.25)
-    vem_opt = k.get('vem_optimal', 0.3)  # Optimal dose for paradox
+    vem_opt = k.get('vem_optimal', 0.3)
     Vem_activation = k_paradox * Vem * torch.exp(-((Vem - vem_opt)**2) / (2 * 0.15**2))
     
     # ==================================================================
     # MAPK PATHWAY - NEGATIVE FEEDBACK LOOPS
     # ==================================================================
     
-    # Feedback 1: ERK induces DUSP6 (phosphatase) which dephosphorylates ERK
-    # This creates a delayed negative feedback loop
     k_dusp_synth = k.get('k_dusp_synth', 0.8)
     k_dusp_deg = k.get('k_dusp_deg', 0.5)
     Km_dusp = k.get('Km_dusp', 0.4)
-    
-    # DUSP6 synthesis: cooperative induction by ERK (Hill coefficient > 1)
-    n_dusp = k.get('n_dusp', 2.5)  # Cooperativity for DUSP6 induction
+    n_dusp = k.get('n_dusp', 2.5)  
     DUSP6_synthesis = k_dusp_synth * (pERK**n_dusp) / (Km_dusp**n_dusp + pERK**n_dusp + 1e-8)
     
-    # DUSP6 phosphatase activity on ERK
     k_dusp_cat = k.get('k_dusp_cat', 0.6)
     DUSP6_inhibition = (k_dusp_cat * DUSP6) / (Km + DUSP6 + 1e-8)
     
-    # Feedback 2: ERK inhibits SOS (RAS activator) - reduces upstream signaling
-    # This feedback reduces RAF activation
     k_erk_sos = k.get('k_erk_sos', 0.4)
     ERK_to_SOS_inhibition = (k_erk_sos * pERK) / (Km + pERK + 1e-8)
     
-    # Feedback 3: MEK substrate inhibition (product inhibition)
     k_mek_inhib = k.get('k_mek_inhib', 0.2)
     MEK_substrate_inhibition = k_mek_inhib * pMEK / (Km + pMEK + 1e-8)
     
@@ -115,26 +108,18 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # PI3K PATHWAY - NEGATIVE FEEDBACK LOOPS
     # ==================================================================
     
-    # Feedback 1: S6K inhibits IRS1 - classic mTORC1 negative feedback
-    # When S6K is high, it phosphorylates IRS1, reducing PI3K activation
     k_s6k_irs = k.get('k_s6k_irs', 0.7)
     Km_s6k = k.get('Km_s6k', 0.5)
-    
-    # S6K-mediated IRS1 inhibition (Michaelis-Menten saturation)
     S6K_to_IRS1_inhibition = (k_s6k_irs * pS6K) / (Km_s6k + pS6K + 1e-8)
     
-    # Feedback 2: S6K feedback to mTOR itself
     k_s6k_mtor = k.get('k_s6k_mtor', 0.3)
     S6K_to_mTOR_feedback = (k_s6k_mtor * pS6K) / (Km + pS6K + 1e-8)
     
-    # Feedback 3: 4EBP1 competes for mTOR activity
     k_4ebp1_comp = k.get('k_4ebp1_comp', 0.25)
     mTOR_4EBP1_competition = k_4ebp1_comp * p4EBP1 / (Km + p4EBP1 + 1e-8)
     
-    # Combined mTOR feedback
     mTOR_total_feedback = S6K_to_IRS1_inhibition + S6K_to_mTOR_feedback
     
-    # Feedback 4: AKT negative feedback (can inhibit upstream RTKs via mTOR)
     k_akt_rtk = k.get('k_akt_rtk', 0.15)
     AKT_to_RTK_feedback = k_akt_rtk * pAKT / (Km + pAKT + 1e-8)
     
@@ -142,23 +127,15 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # BIDIRECTIONAL CROSSTALK
     # ==================================================================
     
-    # Crosstalk 1: AKT inhibits RAF (well-established negative crosstalk)
-    # AKT phosphorylates RAF on inhibitory sites
     k_akt_raf = k.get('k_akt_raf', 0.5)
     AKT_to_RAF_inhibition = (k_akt_raf * pAKT) / (Km + pAKT + 1e-8)
     
-    # Crosstalk 2: ERK inhibits PI3K/IRS1 (negative crosstalk)
-    # ERK can phosphorylate IRS1 and reduce PI3K activation
     k_erk_pi3k = k.get('k_erk_pi3k', 0.45)
     ERK_to_PI3K_inhibition = (k_erk_pi3k * pERK) / (Km + pERK + 1e-8)
     
-    # Crosstalk 3: RAF→PI3K compensatory activation
-    # When MAPK is inhibited, RAF can activate PI3K pathway
     k_raf_pi3k = k.get('k_raf_pi3k', 0.2)
     RAF_to_PI3K_activation = (k_raf_pi3k * pCRAF) / (Km + pCRAF + 1e-8)
     
-    # Crosstalk 4: AKT can relieve MEK inhibition (context-dependent)
-    # Under certain conditions, AKT promotes MAPK signaling
     k_akt_mek = k.get('k_akt_mek', 0.18)
     AKT_to_MEK_promotion = (k_akt_mek * pAKT) / (k.get('Km_akt_mek', 1.2) + pAKT + 1e-8)
     
@@ -166,13 +143,10 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # RECEPTOR DYNAMICS (RTK Phosphorylation)
     # ==================================================================
     
-    # Negative feedback from ERK to Receptors (from MATLAB ERK_EGFR_effect etc.)
     k_erk_rtk = k.get('k_erk_rtk', 0.1)
     ERK_feedback = (k_erk_rtk * pERK) / (k.get('Km_erk_rtk', 0.5) + pERK + 1e-8)
     
     # d(pEGFR)/dt
-    # Activation depends on time (stimulus) and baseline EGFR
-    # Inhibition from ERK feedback and dephosphorylation
     k_egfr_phos = k.get('k_egfr_phos', 0.5)
     k_egfr_dephos = k.get('k_egfr_dephos', 0.2)
     res_pEGFR = dy_dt[:, 0] - (
@@ -194,15 +168,21 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # RTK SIGNALING WITH MULTIPLE FEEDBACKS
     # ==================================================================
     
-    # Base RTK signal (weighted by receptor activity)
-    w_her3 = k.get('w_her3', 1.5)  # HER3 is particularly important for PI3K
+    w_her3 = k.get('w_her3', 1.5)
     RTK_base = pEGFR + HER2 + w_her3 * HER3 + IGF1R
     
-    # SOS/RAS suppression by ERK (feeds MAPK arm)
-    RAS_GTP = RTK_base * (1.0 - ERK_to_SOS_inhibition) * (1.0 - AKT_to_RTK_feedback)
+    # SOS/RAS suppression by ERK + RAS Inhibitor effect
+    # Note: RAS inhibitor directly affects RAS_GTP levels
+    RAS_GTP = RTK_base * (1.0 - ERK_to_SOS_inhibition) * (1.0 - AKT_to_RTK_feedback) * (1.0 - Ras_effect)
     
-    # RTK signal to PI3K pathway (includes ERK and mTOR feedbacks)
-    PI3K_input = RTK_base * (1.0 - ERK_to_PI3K_inhibition) * (1.0 - mTOR_total_feedback)
+    # RTK signal to PI3K pathway
+    # UPDATED: PI3K driven by RTK *AND* RAS (so Ras inhibitor reduces PI3K)
+    w_ras_pi3k = k.get('w_ras_pi3k', 0.5) # Weight of RAS input to PI3K
+    
+    # Contribution from RAS to PI3K (scaled)
+    RAS_input_to_PI3K = w_ras_pi3k * RAS_GTP
+    
+    PI3K_input = (RTK_base + RAS_input_to_PI3K) * (1.0 - ERK_to_PI3K_inhibition) * (1.0 - mTOR_total_feedback)
     
     # Add compensatory RAF→PI3K activation
     PI3K_total_input = PI3K_input + RAF_to_PI3K_activation
