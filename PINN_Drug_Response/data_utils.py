@@ -1,10 +1,21 @@
+from typing import Dict, List, Tuple, Optional, Any
 import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
+
+# Define Data Structure Types
+ExperimentalCondition = Dict[str, Any]
+SpeciesData = Dict[str, np.ndarray]
+
+# List of all protein species in fixed order
+SPECIES_ORDER: List[str] = [
+    'pEGFR', 'HER2', 'HER3', 'IGF1R', 'pCRAF', 'pMEK', 
+    'pERK', 'DUSP6', 'pAKT', 'pS6K', 'p4EBP1'
+]
 
 # Multiple training conditions from western blot experiments
 # Each entry in the list represents a different drug condition
-TRAINING_DATA_LIST = [
+TRAINING_DATA_LIST: List[Dict[str, Any]] = [
     {
         'name': 'Vemurafenib Only (0.5)',
         'time_points': np.array([0, 1, 4, 8, 24, 48]),
@@ -97,32 +108,52 @@ TRAINING_DATA_LIST = [
     }
 ]
 
-SPECIES_ORDER = [
-    'pEGFR', 'HER2', 'HER3', 'IGF1R', 'pCRAF', 'pMEK', 
-    'pERK', 'DUSP6', 'pAKT', 'pS6K', 'p4EBP1'
-]
+# Backward compatibility for legacy notebooks
+TRAINING_DATA_RAW = TRAINING_DATA_LIST
 
 class SignalingDataset(Dataset):
-    def __init__(self, t, drugs, y):
-        self.t = torch.tensor(t, dtype=torch.float32).view(-1, 1)
-        self.drugs = torch.tensor(drugs, dtype=torch.float32)
-        self.y = torch.tensor(y, dtype=torch.float32)
+    """
+    Standard PyTorch dataset for experimental signaling data.
+    Maps (time, drugs) -> protein_expression.
+    """
+    def __init__(self, t: torch.Tensor, drugs: torch.Tensor, y: torch.Tensor):
+        self.t = t
+        self.drugs = drugs
+        self.y = y
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.t)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.t[idx], self.drugs[idx], self.y[idx]
 
-def prepare_training_tensors(train_until_hour=8):
+def prepare_training_tensors(
+    train_until_hour: float = 48.0, 
+    condition_name: Optional[str] = None
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, torch.Tensor]]:
     """
-    Aggregates data from multiple experiments and prepares tensors.
-    Uses Robust Max-Scaling (1.1 * Max) to ensure headroom for predictions.
+    Prepares training and testing tensors from raw experimental data.
+
+    Args:
+        train_until_hour: Cutoff time for training; data after this is testing.
+        condition_name: If provided, filters to only this condition.
+        
+    Returns:
+        train_data: Dict with keys 't', 'drugs', 'y_norm', 'y_raw'
+        test_data: Dict with keys 't', 'drugs', 'y_norm', 'y_raw'
+        scalers: Dict with normalization factors
     """
     all_t, all_y, all_drugs = [], [], []
     
-    # 1. Collect data from ALL experiments
-    for exp in TRAINING_DATA_LIST:
+    # 1. Filter experiments if condition_name is provided
+    experiments = TRAINING_DATA_LIST
+    if condition_name:
+        experiments = [e for e in TRAINING_DATA_LIST if e['name'] == condition_name]
+        if not experiments:
+            raise ValueError(f"Condition '{condition_name}' not found.")
+    
+    # 2. Collect data from selected experiments
+    for exp in experiments:
         t_points = exp['time_points'].astype(np.float32)
         num_pts = len(t_points)
         
@@ -146,92 +177,64 @@ def prepare_training_tensors(train_until_hour=8):
     y_data = np.concatenate(all_y)
     drugs_data = np.concatenate(all_drugs)
     
-    # 2. Train/Test Split logic
-    train_mask = t_data <= train_until_hour
+    # 3. Min-Max Normalization (Per-protein)
+    y_min = np.min(y_data, axis=0)
+    y_max = np.max(y_data, axis=0)
+    y_range = y_max - y_min
     
-    # 3. Robust Normalization Factors
-    # Using 1.1x Max provides "numerical headroom" so predictions don't hit the Softplus ceiling
-    y_scale = np.max(y_data, axis=0) * 1.1 + 1e-8
+    # Avoid div by zero
+    y_range[y_range == 0] = 1.0
+    
+    # Apply normalization: [0, 1]
+    y_norm_all = (y_data - y_min) / y_range
+    y_norm_all = np.nan_to_num(y_norm_all, nan=0.0, posinf=1.0, neginf=0.0)
+    
     t_max = 48.0
     
-    # 4. Prepare Outputs
-    train_data = {
-        't': t_data[train_mask],
-        't_norm': (t_data[train_mask] / t_max).reshape(-1, 1),
-        'drugs': drugs_data[train_mask],
-        'y_norm': y_data[train_mask] / y_scale,
-        'y_raw': y_data[train_mask]
-    }
+    # 4. Train/Test Split
+    train_mask = t_data <= train_until_hour
     
-    test_data = {
-        't': t_data[~train_mask],
-        't_norm': (t_data[~train_mask] / t_max).reshape(-1, 1),
-        'drugs': drugs_data[~train_mask],
-        'y_norm': y_data[~train_mask] / y_scale,
-        'y_raw': y_data[~train_mask]
-    }
+    def package_data(mask):
+        return {
+            't': t_data[mask],
+            't_norm': (t_data[mask] / t_max).reshape(-1, 1),
+            'drugs': drugs_data[mask],
+            'y_norm': y_norm_all[mask],  # Normalized [0, 1]
+            'y_raw': y_data[mask]        # Original scale
+        }
+    
+    train_data = package_data(train_mask)
+    test_data = package_data(~train_mask)
     
     scalers = {
-        'y_mean': torch.zeros(11),
-        'y_std': torch.tensor(y_scale, dtype=torch.float32),
+        'y_mean': torch.tensor(y_min, dtype=torch.float32),
+        'y_std': torch.tensor(y_range, dtype=torch.float32),
         't_range': torch.tensor(t_max, dtype=torch.float32)
     }
     
     return train_data, test_data, scalers
-    
-    test_data = {
-        't': t_test,
-        't_norm': t_test_norm,
-        'drugs': drugs_test,
-        'y': y_test_norm,       # Mapping 'y' to normalized
-        'y_norm': y_test_norm,  # Compatibility
-        'y_raw': y_test         # Original
-    }
-    
-    return train_data, test_data, scalers
 
-def get_collocation_points(n_points=100, extrapolation_weight=2.0):
+def get_collocation_points(n_points: int = 2000) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Generates collocation points for physics loss.
-    CRITICAL: Must cover ENTIRE time domain including extrapolation region.
-    
+    Generates physics collocation points covering the domain [0, 48].
+
     Args:
-        n_points: Total number of collocation points
-        extrapolation_weight: How many more points in extrapolation vs training region
-    """
-    # Split points between training region and extrapolation region
-    # Training: 0-8hrs (normalized: 0-0.167)
-    # Extrapolation: 8-48hrs (normalized: 0.167-1.0)
-    
-    n_train_region = int(n_points / (1 + extrapolation_weight))
-    n_extrap_region = n_points - n_train_region
-    
-    # Training region: 0 to 8 hrs (normalized 0 to 8/48 = 0.167)
-    t_train_region = np.linspace(0, 8/48, n_train_region)
-    
-    # Extrapolation region: 8 to 48 hrs (normalized 0.167 to 1.0)
-    t_extrap_region = np.linspace(8/48, 1.0, n_extrap_region)
-    
-    t_physics = np.concatenate([t_train_region, t_extrap_region]).reshape(-1, 1)
-    
-    # Randomize drug concentrations for physics training
-    # This is CRITICAL for the model to learn the effect of drugs it hasn't seen in exp data
-    # ranges: [0, 1.0] for all drugs
-    
-    vemurafenib = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
-    trametinib = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
-    pi3k_inhibitor = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
-    ras_inhibitor = np.random.uniform(0, 1.0, size=(len(t_physics), 1))
-    
-    # Also include specific "pure" conditions to ensure boundaries are well-learned
-    # e.g., mix in some cases with 0 drugs, or only 1 drug
-    mask_pure = np.random.rand(len(t_physics)) < 0.2
-    if np.any(mask_pure):
-        vemurafenib[mask_pure] = 0
-        trametinib[mask_pure] = 0
-        pi3k_inhibitor[mask_pure] = 0
-        ras_inhibitor[mask_pure] = 0
+        n_points: Total points to generate.
         
-    drugs_physics = np.hstack([vemurafenib, trametinib, pi3k_inhibitor, ras_inhibitor])
+    Returns:
+        t_physics: Temporal points (normalized).
+        drugs_physics: Drug concentration points.
+    """
+    # Time Domain: [0, 1.0] (normalized)
+    t_physics = np.random.uniform(0, 1.0, size=(n_points, 1)).astype(np.float32)
     
-    return torch.tensor(t_physics, dtype=torch.float32), torch.tensor(drugs_physics, dtype=torch.float32)
+    # Drug Domain: [0, 1.0] (normalized concentrations)
+    # We mix pure uniform sampling with "discrete" sampling to ensure
+    # the model sees both distinct conditions and interpolated ones.
+    drugs_uniform = np.random.uniform(0, 1.0, size=(n_points, 4)).astype(np.float32)
+    
+    # Add bias towards sparsity (often drugs are 0)
+    mask = np.random.rand(n_points, 4) < 0.3
+    drugs_uniform[mask] = 0.0
+    
+    return torch.tensor(t_physics), torch.tensor(drugs_uniform)
