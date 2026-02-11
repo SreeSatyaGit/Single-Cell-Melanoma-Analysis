@@ -252,11 +252,26 @@ def generate_prediction_table(model_path='pinn_model_best.pth', save_path='predi
 if __name__ == "__main__":
     import os
     
-    if os.path.exists('pinn_model_best.pth'):
-        print("Generating extrapolation analysis...")
-        plot_extrapolation_results()
-        plot_training_history()
-        df = generate_prediction_table()
+    # Check default location from config, then fallback
+    default_model = 'results/nature_submission/pinn_model_global.pth'
+    if not os.path.exists(default_model):
+        default_model = 'pinn_model_best.pth'
+    
+    if os.path.exists(default_model):
+        print(f"Generating extrapolation analysis using {default_model}...")
+        
+        # Determine history file path
+        if 'pinn_model_global.pth' in default_model:
+            history_file = default_model.replace('pinn_model_global.pth', 'history_global.csv')
+        else:
+            history_file = 'training_history.csv'
+            
+        plot_extrapolation_results(model_path=default_model)
+        
+        if os.path.exists(history_file):
+            plot_training_history(history_file=history_file)
+            
+        df = generate_prediction_table(model_path=default_model)
         print("\n✓ All visualizations complete!")
     else:
-        print("Error: pinn_model_best.pth not found. Train the model first.")
+        print(f"Error: Model not found at {default_model}. Train the model first.")

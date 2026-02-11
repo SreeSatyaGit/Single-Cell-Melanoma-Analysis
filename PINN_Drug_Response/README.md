@@ -72,6 +72,7 @@ pip install -r requirements.txt
 
 ## Usage
 
+
 ### Basic Training and Extrapolation
 
 ```bash
@@ -79,114 +80,56 @@ python main.py
 ```
 
 This will:
-1. Train PINN on configured time range
-2. Evaluate extrapolation if test points are held out
-3. Generate visualizations and predictions
+1. Train a global PINN model on all available drug conditions.
+2. Evaluate performance on any held-out test data.
+3. Generate comprehensive visualization plots for each condition.
+4. Save the trained model and history to `results/nature_submission/`.
+
+### Making Conceptions (Inference)
+
+To predict pathway response to a **new custom drug combination** without retraining:
+
+```bash
+python inference.py --model results/nature_submission/pinn_model_global.pth \
+  --vemurafenib 0.5 \
+  --trametinib 0.1 \
+  --pi3k 0.0 \
+  --ras 0.0 \
+  --output custom_prediction.png
+```
+
+This generates a plot and CSV file for the specified dosage.
 
 ### Output Files
 
-- `pinn_model_best.pth` - Best model checkpoint
-- `extrapolation_results.png` - Training fit + test extrapolation
-- `training_test_history.png` - Train vs test loss curves
-- `predictions_table.csv` - Detailed predictions with errors
-- `training_history.csv` - Loss values per epoch
-- `training_config.json` - Hyperparameters
+Results are saved in `results/nature_submission/`:
 
-### Visualization Only
-
-If you already have a trained model:
-
-```bash
-python visualize_extrapolation.py
-```
-
-## Model Architecture
-
-**Input Layer (5 features):**
-- Time (normalized)
-- Vemurafenib concentration
-- Trametinib concentration
-- PI3K inhibitor concentration
-- RAS inhibitor concentration
-
-**Hidden Layers:**
-- 4 hidden layers × 100 neurons
-- Activation: Hyperbolic tangent (tanh)
-
-**Output Layer (11 species):**
-- All phosphorylated proteins
-- Activation: Softplus (ensures positivity)
-
-## Loss Function
-
-```
-Total Loss = λ₁·L_data + λ₂·L_physics + λ₃·L_boundary + λ₄·L_conservation
-```
-
-**Components:**
-1. **Data Loss**: MSE between predictions and experimental data (training points only)
-2. **Physics Loss**: ODE residuals (∂y/∂t - f(y, drugs, k))
-3. **Boundary Loss**: Initial condition enforcement at t=0
-4. **Conservation Loss**: Biological constraints (non-negativity, pathway balance)
-
-**Default Weights:**
-- Data: 1.0, Physics: 0.5, Boundary: 0.3, Conservation: 0.2
-
-## Physics Constraints
-
-The model enforces these biological ODEs:
-
-**MAPK:**
-```
-d(pMEK)/dt = k1·pCRAF·(1-Tram)·(1-AKT_inh) + AKT_relief - k2·pMEK
-d(pERK)/dt = k3·pMEK·(1-DUSP6) - k4·pERK
-d(DUSP6)/dt = k5·pERK²/(Km²+pERK²) - k6·DUSP6
-```
-
-**PI3K:**
-```
-d(pAKT)/dt = k7·RTK·(1-PI3Ki) + RAF_feedfwd - k8·pAKT - mTOR_feedback
-d(pS6K)/dt = k9·pAKT·(1+k·p4EBP1) - k10·pS6K
-d(p4EBP1)/dt = k11·pAKT - k12·p4EBP1
-```
-
-All rate constants (k1-k14, k_cat) are **learned during training** alongside neural network weights.
-
-## Interpreting Results
-
-### Good Extrapolation Indicators:
-- **High R² on test set (>0.7)**: Model captures temporal dynamics
-- **Smooth predictions**: Physics constraints prevent overfitting
-- **Low train-test gap**: Generalization to unseen time points
-
-### Poor Extrapolation Indicators:
-- **Oscillations at 24-48hrs**: Overfitting or weak physics constraints
-- **R² < 0.5 on test**: Model hasn't learned dynamics
-- **Large train-test gap**: Need stronger regularization
-
-## Key Features
-
-1. **Train/Test Temporal Split**: Validates extrapolation capability
-2. **Physics-Informed**: Not just curve fitting—enforces biological laws
-3. **Learnable Rate Constants**: Infers kinetic parameters from data
-4. **Crosstalk Modeling**: Captures compensatory drug resistance mechanisms
-5. **Real-Time Monitoring**: Tracks both train and test loss during training
+- `pinn_model_global.pth` - Best model checkpoint.
+- `history_global.png` - Training vs Test loss curves.
+- `fit_{condition}.png` - Plots showing model fit vs experimental data.
+- `table_{condition}.csv` - Detailed numerical predictions.
 
 ## Hyperparameter Tuning
 
-Edit `main.py` config dictionary:
+Configuration is managed in `config.py` using dataclasses for type safety and clarity.
+
+To modify training parameters, edit `config.py`:
 
 ```python
-config = {
-    'num_epochs': 5000,        # Increase if underfitting
-    'learning_rate': 0.001,    # Typical range: [1e-4, 1e-2]
-    'hidden_size': 100,        # Try [50, 100, 200]
-    'num_physics_points': 100, # More = stronger physics
-    'weights': {
-        'physics': 0.5,        # Increase to enforce ODEs more
-        'data': 1.0,
-    }
-}
+@dataclass
+class TrainingConfig:
+    # Experiment
+    output_dir: str = "results/nature_submission"
+    
+    # Optimization
+    num_epochs: int = 50000
+    learning_rate: float = 1e-4
+    
+    # Physics
+    num_physics_points: int = 2000
+    
+    # Weights are in the LossWeights class
+    weights: LossWeights = field(default_factory=LossWeights)
 ```
 
 ## Next Steps
