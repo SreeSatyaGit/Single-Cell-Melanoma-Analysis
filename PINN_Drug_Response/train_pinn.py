@@ -22,7 +22,6 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
     Returns:
         Tuple containing trained model, kinetic params, history, scalers, train_data, test_data.
     """
-    # Setup Logger
     log_file = f"{config.output_dir}/training_{condition_name if condition_name else 'global'}.log"
     logger = setup_logger(log_file=log_file)
     
@@ -104,7 +103,6 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
         t_physics = t_physics_raw.to(device)
         drugs_physics = drugs_physics_raw.to(device)
         
-        # --- (a) Data Loss ---
         t_data_batch, drugs_data_batch, y_exp_batch = next(iter(data_loader))
         t_data_batch = t_data_batch.to(device)
         drugs_data_batch = drugs_data_batch.to(device)
@@ -115,12 +113,10 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
         y_pred = model(t_data_batch, drugs_data_batch + jitter)
         l_data = mse_loss(y_pred, y_exp_batch)
         
-        # --- (b) Physics Loss (Annealed) ---
         phys_weight_multiplier = min(1.0, (epoch + 1) / (config.num_epochs * 0.5))
         current_phys_weight = config.weights.physics * phys_weight_multiplier
         l_physics = compute_physics_loss(model, t_physics, drugs_physics, k_params, scalers_device)
         
-        # --- (c) Boundary Loss ---
         idx0 = (t_data_batch == 0).squeeze()
         if idx0.any():
             y0_pred = model(t_data_batch[idx0], drugs_data_batch[idx0])
@@ -128,7 +124,6 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
         else:
             l_boundary = torch.tensor(0.0, device=device)
         
-        # --- (d) Regularization ---
         l_conservation = compute_conservation_loss(y_pred, scalers_device)
         l_sparsity = sum(torch.abs(p) for p in k_params.parameters())
         
@@ -148,7 +143,6 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
         optimizer.step()
         scheduler.step()
         
-        # Monitoring
         if epoch % 100 == 0:
             model.eval()
             with torch.no_grad():
@@ -176,7 +170,7 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
                     'condition_name': 'global' if condition_name is None else condition_name,
                     'config': config.to_dict()
                 }
-                save_checkpoint(checkpoint_data, save_name, logger=None) # Logger none to avoid spam
+                save_checkpoint(checkpoint_data, save_name, logger=None)
 
     # Save History
     hist_name = f"{config.output_dir}/history_{condition_name.replace(' ', '_') if condition_name else 'global'}.csv"

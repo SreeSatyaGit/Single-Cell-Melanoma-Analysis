@@ -56,7 +56,7 @@ TRAINING_DATA_LIST: List[Dict[str, Any]] = [
         'name': 'Vem + Tram Combo',
         'time_points': np.array([0, 1, 4, 8, 24, 48]),
         'species': {
-            'pEGFR': np.array([0.222379739,0.622877159,0.629217784,0.533530834,0.022513609,0.010036399]), # Placeholder values
+            'pEGFR': np.array([0.222379739,0.622877159,0.629217784,0.533530834,0.022513609,0.010036399]),
             'HER2':  np.array([0.306924546,0.275751955,0.32171108,0.23070312,1.013023288,1.045536401]),
             'HER3':  np.array([0.295284147,0.285719072,0.385045943,0.582261781,0.751301308,0.264889608]),
             'IGF1R': np.array([1.180034579,0.967927178,0.808905442,0.781013289,0.41928501,0.870763253]),
@@ -108,7 +108,6 @@ TRAINING_DATA_LIST: List[Dict[str, Any]] = [
     }
 ]
 
-# Backward compatibility for legacy notebooks
 TRAINING_DATA_RAW = TRAINING_DATA_LIST
 
 class SignalingDataset(Dataset):

@@ -64,9 +64,8 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     IC50 = k.get('IC50', 0.5)
     n = k.get('hill_coeff', 2.0)
     
-    # ==================================================================
-    # DRUG EFFECTS - Hill equation with dose-response
-    # ==================================================================
+    # Drug Effects
+
     
     # Tramametinib inhibits MEK
     Tram_effect = (Tram**n) / (IC50**n + Tram**n + 1e-8)
@@ -104,9 +103,8 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     k_mek_inhib = k.get('k_mek_inhib', 0.2)
     MEK_substrate_inhibition = k_mek_inhib * pMEK / (Km + pMEK + 1e-8)
     
-    # ==================================================================
-    # PI3K PATHWAY - NEGATIVE FEEDBACK LOOPS
-    # ==================================================================
+    # PI3K Pathway Feedbacks
+
     
     k_s6k_irs = k.get('k_s6k_irs', 0.7)
     Km_s6k = k.get('Km_s6k', 0.5)
@@ -123,9 +121,8 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     k_akt_rtk = k.get('k_akt_rtk', 0.15)
     AKT_to_RTK_feedback = k_akt_rtk * pAKT / (Km + pAKT + 1e-8)
     
-    # ==================================================================
-    # BIDIRECTIONAL CROSSTALK
-    # ==================================================================
+    # Bidirectional Crosstalk
+
     
     k_akt_raf = k.get('k_akt_raf', 0.5)
     AKT_to_RAF_inhibition = (k_akt_raf * pAKT) / (Km + pAKT + 1e-8)
@@ -139,181 +136,58 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     k_akt_mek = k.get('k_akt_mek', 0.18)
     AKT_to_MEK_promotion = (k_akt_mek * pAKT) / (k.get('Km_akt_mek', 1.2) + pAKT + 1e-8)
     
-    # ==================================================================
-    # RECEPTOR DYNAMICS (RTK Phosphorylation)
-    # ==================================================================
-    
-    k_erk_rtk = k.get('k_erk_rtk', 0.1)
-    ERK_feedback = (k_erk_rtk * pERK) / (k.get('Km_erk_rtk', 0.5) + pERK + 1e-8)
-    
-    # d(pEGFR)/dt
-    k_egfr_phos = k.get('k_egfr_phos', 0.5)
-    k_egfr_dephos = k.get('k_egfr_dephos', 0.2)
-    res_pEGFR = dy_dt[:, 0] - (
-        k_egfr_phos * (1.0 - pEGFR) - (k_egfr_dephos + ERK_feedback) * pEGFR
-    )
-    
-    # d(HER2)/dt and d(HER3)/dt
-    k_her_phos = k.get('k_her_phos', 0.4)
-    k_her_dephos = k.get('k_her_dephos', 0.15)
-    res_HER2 = dy_dt[:, 1] - (k_her_phos * (1.0 - HER2) - (k_her_dephos + ERK_feedback) * HER2)
-    res_HER3 = dy_dt[:, 2] - (k_her_phos * (1.0 - HER3) - (k_her_dephos + ERK_feedback) * HER3)
-    
-    # d(IGF1R)/dt
-    k_igf_phos = k.get('k_igf_phos', 0.3)
-    k_igf_dephos = k.get('k_igf_dephos', 0.2)
-    res_IGF1R = dy_dt[:, 3] - (k_igf_phos * (1.0 - IGF1R) - (k_igf_dephos + ERK_feedback) * IGF1R)
-    
-    # ==================================================================
-    # RTK SIGNALING WITH MULTIPLE FEEDBACKS
-    # ==================================================================
-    
+    # RTK signaling and crosstalk inputs
     w_her3 = k.get('w_her3', 1.5)
     RTK_base = pEGFR + HER2 + w_her3 * HER3 + IGF1R
     
-    # SOS/RAS suppression by ERK + RAS Inhibitor effect
-    # Note: RAS inhibitor directly affects RAS_GTP levels
     RAS_GTP = RTK_base * (1.0 - ERK_to_SOS_inhibition) * (1.0 - AKT_to_RTK_feedback) * (1.0 - Ras_effect)
-    
-    # RTK signal to PI3K pathway
-    # UPDATED: PI3K driven by RTK *AND* RAS (so Ras inhibitor reduces PI3K)
-    w_ras_pi3k = k.get('w_ras_pi3k', 0.5) # Weight of RAS input to PI3K
-    
-    # Contribution from RAS to PI3K (scaled)
-    RAS_input_to_PI3K = w_ras_pi3k * RAS_GTP
-    
-    PI3K_input = (RTK_base + RAS_input_to_PI3K) * (1.0 - ERK_to_PI3K_inhibition) * (1.0 - mTOR_total_feedback)
-    
-    # Add compensatory RAF→PI3K activation
+    w_ras_pi3k = k.get('w_ras_pi3k', 0.5)
+    PI3K_input = (RTK_base + w_ras_pi3k * RAS_GTP) * (1.0 - ERK_to_PI3K_inhibition) * (1.0 - mTOR_total_feedback)
     PI3K_total_input = PI3K_input + RAF_to_PI3K_activation
     
-    # ==================================================================
-    # ORDINARY DIFFERENTIAL EQUATIONS (ODEs)
-    # ==================================================================
+    # --- MAPK Pathway ODEs ---
+    k_craf_act, k_craf_deg = k.get('k_craf_act', 1.2), k.get('k_craf_deg', 0.35)
+    res_pCRAF = dy_dt[:, 4] - ((k_craf_act * RAS_GTP * (1.0 - Vem_inhibition) + Vem_activation) * (1.0 - pCRAF) - (k_craf_deg + AKT_to_RAF_inhibition) * pCRAF)
     
-    # ---------------------- MAPK Pathway ODEs ----------------------
+    k_mek_act, k_mek_deg = k.get('k_mek_act', 1.0), k.get('k_mek_deg', 0.4)
+    res_pMEK = dy_dt[:, 5] - ((k_mek_act * pCRAF * (1.0 - Tram_effect) * (1.0 - AKT_to_RAF_inhibition) + AKT_to_MEK_promotion) * (1.0 - pMEK) - (k_mek_deg + MEK_substrate_inhibition) * pMEK)
     
-    # d(pCRAF)/dt
-    # Activation: RTK signaling, paradoxical Vem activation | Targets pool (1 - pCRAF)
-    # Inhibition: Vemurafenib, AKT feedback, degradation
-    k_craf_act = k.get('k_craf_act', 1.2)
-    k_craf_deg = k.get('k_craf_deg', 0.35)
+    k_erk_act, k_erk_deg = k.get('k_erk_act', 1.2), k.get('k_erk_deg', 0.45)
+    res_pERK = dy_dt[:, 6] - (k_erk_act * pMEK * (1.0 - pERK) - (k_erk_deg + DUSP6_inhibition) * pERK)
     
-    res_pCRAF = dy_dt[:, 4] - (
-        (k_craf_act * RAS_GTP * (1.0 - Vem_inhibition) + Vem_activation) * (1.0 - pCRAF)
-        - (k_craf_deg + AKT_to_RAF_inhibition) * pCRAF
-    )
+    res_pDUSP6 = dy_dt[:, 7] - (DUSP6_synthesis - k_dusp_deg * DUSP6)
     
-    # d(pMEK)/dt
-    # Activation: pCRAF, AKT promotion | Targets pool (1 - pMEK)
-    # Inhibition: Tramametinib, degradation, substrate inhibition
-    k_mek_act = k.get('k_mek_act', 1.0)
-    k_mek_deg = k.get('k_mek_deg', 0.4)
+    # --- PI3K Pathway ODEs ---
+    k_akt_act, k_akt_deg = k.get('k_akt_act', 1.0), k.get('k_akt_deg', 0.4)
+    res_pAKT = dy_dt[:, 8] - (k_akt_act * PI3K_total_input * (1.0 - PI3Ki_effect) * (1.0 - pAKT) - (k_akt_deg + mTOR_total_feedback) * pAKT)
     
-    res_pMEK = dy_dt[:, 5] - (
-        (k_mek_act * pCRAF * (1.0 - Tram_effect) * (1.0 - AKT_to_RAF_inhibition) + AKT_to_MEK_promotion) * (1.0 - pMEK)
-        - (k_mek_deg + MEK_substrate_inhibition) * pMEK
-    )
+    k_s6k_act, k_s6k_deg = k.get('k_s6k_act', 0.9), k.get('k_s6k_deg', 0.5)
+    res_pS6K = dy_dt[:, 9] - (k_s6k_act * (pAKT * (1.0 - mTOR_4EBP1_competition)) * (1.0 - pS6K) - k_s6k_deg * pS6K)
     
-    # d(pERK)/dt
-    # Activation: pMEK | Targets pool (1 - pERK)
-    # Inhibition: DUSP6 (phosphatase-mediated dephos), degradation
-    k_erk_act = k.get('k_erk_act', 1.2)
-    k_erk_deg = k.get('k_erk_deg', 0.45)
-    
-    res_pERK = dy_dt[:, 6] - (
-        k_erk_act * pMEK * (1.0 - pERK) 
-        - (k_erk_deg + DUSP6_inhibition) * pERK
-    )
-    
-    # d(DUSP6)/dt
-    # Synthesis: ERK-dependent | Net synthesis minus degradation
-    res_pDUSP6 = dy_dt[:, 7] - (
-        DUSP6_synthesis - k_dusp_deg * DUSP6
-    )
-    
-    # ---------------------- PI3K Pathway ODEs ----------------------
-    
-    # d(pAKT)/dt
-    # Activation: PI3K input, RAF crosstalk | Targets pool (1 - pAKT)
-    # Inhibition: PI3Ki, degradation, S6K feedback
-    k_akt_act = k.get('k_akt_act', 1.0)
-    k_akt_deg = k.get('k_akt_deg', 0.4)
-    
-    res_pAKT = dy_dt[:, 8] - (
-        k_akt_act * (PI3K_total_input) * (1.0 - PI3Ki_effect) * (1.0 - pAKT)
-        - (k_akt_deg + mTOR_total_feedback) * pAKT
-    )
-    
-    # d(pS6K)/dt
-    # Activation: mTOR (AKT-dependent) | Targets pool (1 - pS6K)
-    k_s6k_act = k.get('k_s6k_act', 0.9)
-    k_s6k_deg = k.get('k_s6k_deg', 0.5)
-    
-    # mTOR activity proportional to AKT, modulated by 4EBP1 competition
-    mTOR_activity = pAKT * (1.0 - mTOR_4EBP1_competition)
-    
-    res_pS6K = dy_dt[:, 9] - (
-        k_s6k_act * mTOR_activity * (1.0 - pS6K)
-        - k_s6k_deg * pS6K
-    )
-    
-    # d(p4EBP1)/dt
-    # Activation: AKT/mTOR | Targets pool (1 - p4EBP1)
-    k_4ebp1_act = k.get('k_4ebp1_act', 0.85)
-    k_4ebp1_deg = k.get('k_4ebp1_deg', 0.45)
-    
-    res_p4EBP1 = dy_dt[:, 10] - (
-        k_4ebp1_act * pAKT * (1.0 - p4EBP1)
-        - k_4ebp1_deg * p4EBP1
-    )
-    
-    # ==================================================================
-    # WEIGHTED PHYSICS LOSS
-    # ==================================================================
-    
-    # Weight residuals by biological importance and measurement reliability
-    weights = {
-        'pEGFR': k.get('w_egfr', 1.0),
-        'HER2': k.get('w_her2', 1.0),
-        'HER3': k.get('w_her3_w', 1.0),
-        'IGF1R': k.get('w_igf1r', 1.0),
-        'pCRAF': k.get('w_craf', 1.2),
-        'pMEK': k.get('w_mek', 1.8),   # Key drug target
-        'pERK': k.get('w_erk', 2.5),   # Master regulator, highly measurable
-        'DUSP6': k.get('w_dusp6', 1.5), # Important feedback regulator
-        'pAKT': k.get('w_akt', 2.5),   # Master regulator, key drug target
-        'pS6K': k.get('w_s6k', 1.5),   # Important mTOR readout
-        'p4EBP1': k.get('w_4ebp1', 1.3), # mTOR target
-    }
-    
-    # ==================================================================
-    # 1. RECEPTOR DYNAMICS (RTK Phosphorylation)
-    # ==================================================================
-    
-    # Negative feedback from ERK to Receptors (from MATLAB ERK_EGFR_effect etc.)
+    k_4ebp1_act, k_4ebp1_deg = k.get('k_4ebp1_act', 0.85), k.get('k_4ebp1_deg', 0.45)
+    res_p4EBP1 = dy_dt[:, 10] - (k_4ebp1_act * pAKT * (1.0 - p4EBP1) - k_4ebp1_deg * p4EBP1)
+
+    # Receptor Dynamics (calculated here to avoid repetition)
     k_erk_rtk = k.get('k_erk_rtk', 0.1)
     ERK_feedback = (k_erk_rtk * pERK) / (k.get('Km_erk_rtk', 0.5) + pERK + 1e-8)
     
-    # d(pEGFR)/dt
-    # Activation depends on time (stimulus) and baseline EGFR
-    # Inhibition from ERK feedback and dephosphorylation
-    k_egfr_phos = k.get('k_egfr_phos', 0.5)
-    k_egfr_dephos = k.get('k_egfr_dephos', 0.2)
-    res_pEGFR = dy_dt[:, 0] - (
-        k_egfr_phos * (1.0 - pEGFR) - (k_egfr_dephos + ERK_feedback) * pEGFR
-    )
+    k_egfr_phos, k_egfr_dephos = k.get('k_egfr_phos', 0.5), k.get('k_egfr_dephos', 0.2)
+    res_pEGFR = dy_dt[:, 0] - (k_egfr_phos * (1.0 - pEGFR) - (k_egfr_dephos + ERK_feedback) * pEGFR)
     
-    # d(HER2)/dt and d(HER3)/dt
-    k_her_phos = k.get('k_her_phos', 0.4)
-    k_her_dephos = k.get('k_her_dephos', 0.15)
+    k_her_phos, k_her_dephos = k.get('k_her_phos', 0.4), k.get('k_her_dephos', 0.15)
     res_HER2 = dy_dt[:, 1] - (k_her_phos * (1.0 - HER2) - (k_her_dephos + ERK_feedback) * HER2)
     res_HER3 = dy_dt[:, 2] - (k_her_phos * (1.0 - HER3) - (k_her_dephos + ERK_feedback) * HER3)
     
-    # d(IGF1R)/dt
-    k_igf_phos = k.get('k_igf_phos', 0.3)
-    k_igf_dephos = k.get('k_igf_dephos', 0.2)
+    k_igf_phos, k_igf_dephos = k.get('k_igf_phos', 0.3), k.get('k_igf_dephos', 0.2)
     res_IGF1R = dy_dt[:, 3] - (k_igf_phos * (1.0 - IGF1R) - (k_igf_dephos + ERK_feedback) * IGF1R)
+    
+    # Weighted Physics Loss
+    weights = {
+        'pEGFR': k.get('w_egfr', 1.0), 'HER2': k.get('w_her2', 1.0), 'HER3': k.get('w_her3_w', 1.0),
+        'IGF1R': k.get('w_igf1r', 1.0), 'pCRAF': k.get('w_craf', 1.2), 'pMEK': k.get('w_mek', 1.8),
+        'pERK': k.get('w_erk', 2.5), 'DUSP6': k.get('w_dusp6', 1.5), 'pAKT': k.get('w_akt', 2.5),
+        'pS6K': k.get('w_s6k', 1.5), 'p4EBP1': k.get('w_4ebp1', 1.3),
+    }
     
     physics_loss = (
         weights['pEGFR'] * torch.mean(res_pEGFR**2) +
@@ -331,226 +205,19 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     
     return physics_loss
 
-
 def compute_conservation_loss(y_pred_norm, scalers):
-    """
-    Enhanced biological constraints with pathway balance.
-    """
+    """Biological constraints for pathway consistency."""
     y = y_pred_norm * scalers['y_std'] + scalers['y_mean']
-    
-    # Non-negativity constraint
     neg_penalty = torch.mean(torch.relu(-y))
     
-    # ==================================================================
-    # PATHWAY BALANCE CONSTRAINTS
-    # ==================================================================
+    pCRAF, pMEK, pERK = y[:, 4], y[:, 5], y[:, 6]
+    DUSP6, pAKT, pS6K, p4EBP1 = y[:, 7], y[:, 8], y[:, 9], y[:, 10]
     
-    pCRAF = y[:, 4]
-    pMEK = y[:, 5]
-    pERK = y[:, 6]
-    DUSP6 = y[:, 7]
-    pAKT = y[:, 8]
-    pS6K = y[:, 9]
-    p4EBP1 = y[:, 10]
-    
-    # MAPK cascade ordering: RAF → MEK → ERK
-    # Soft constraint: signal should flow downward
-    # Allow some violations due to feedback, but penalize large discrepancies
-    mapk_flow_1 = torch.mean(torch.relu(pMEK - 2.5 * pCRAF)**2)
-    mapk_flow_2 = torch.mean(torch.relu(pERK - 2.5 * pMEK)**2)
-    
-    # DUSP6 should correlate with ERK (they form feedback loop)
-    dusp6_erk_correlation = torch.mean((DUSP6 - 0.8 * pERK)**2)
-    
-    # PI3K cascade: AKT → mTOR → S6K/4EBP1
-    # Downstream should not exceed upstream by too much
-    pi3k_flow_1 = torch.mean(torch.relu(pS6K - 2.0 * pAKT)**2)
-    pi3k_flow_2 = torch.mean(torch.relu(p4EBP1 - 2.0 * pAKT)**2)
-    
-    # S6K and 4EBP1 should be somewhat correlated (both from mTOR)
+    mapk_flow = torch.mean(torch.relu(pMEK - 2.5 * pCRAF)**2) + torch.mean(torch.relu(pERK - 2.5 * pMEK)**2)
+    dusp6_corr = torch.mean((DUSP6 - 0.8 * pERK)**2)
+    pi3k_flow = torch.mean(torch.relu(pS6K - 2.0 * pAKT)**2) + torch.mean(torch.relu(p4EBP1 - 2.0 * pAKT)**2)
     mtor_balance = torch.mean((pS6K - p4EBP1)**2)
+    erk_dusp_fdbk = torch.mean(torch.relu(pERK - DUSP6 - 0.5)**2)
     
-    # ==================================================================
-    # FEEDBACK LOOP CONSTRAINTS
-    # ==================================================================
-    
-    # When ERK is high, DUSP6 should eventually be high (feedback)
-    # Soft constraint to encourage this relationship
-    erk_dusp_feedback = torch.mean(torch.relu(pERK - DUSP6 - 0.5)**2)
-    
-    # When S6K is high, it should eventually suppress upstream (PI3K/AKT)
-    # This is captured in the ODEs, but we can add soft constraint
-    
-    # Combine all conservation losses
-    conservation_loss = (
-        neg_penalty +
-        0.02 * mapk_flow_1 +
-        0.02 * mapk_flow_2 +
-        0.015 * dusp6_erk_correlation +
-        0.02 * pi3k_flow_1 +
-        0.02 * pi3k_flow_2 +
-        0.01 * mtor_balance +
-        0.015 * erk_dusp_feedback
-    )
-    
-    return conservation_loss
+    return neg_penalty + 0.02 * mapk_flow + 0.015 * dusp6_corr + 0.02 * pi3k_flow + 0.01 * mtor_balance + 0.015 * erk_dusp_fdbk
 
-
-def compute_crosstalk_loss(y_pred_norm, scalers, k_params):
-    """
-    Explicit loss term to enforce known crosstalk relationships and feedback dynamics.
-    """
-    y = y_pred_norm * scalers['y_std'] + scalers['y_mean']
-    
-    pCRAF = y[:, 4]
-    pERK = y[:, 6]
-    DUSP6 = y[:, 7]
-    pAKT = y[:, 8]
-    pS6K = y[:, 9]
-    
-    # ==================================================================
-    # NEGATIVE FEEDBACK RELATIONSHIPS
-    # ==================================================================
-    
-    # Feedback 1: ERK-DUSP6 negative feedback loop
-    # High ERK should correlate with high DUSP6 (eventually)
-    # But high DUSP6 should suppress ERK
-    erk_dusp_feedback = torch.mean((pERK * DUSP6 - k_params.get('erk_dusp_product', 0.4))**2)
-    
-    # Feedback 2: S6K should suppress PI3K pathway
-    # When S6K is very high, AKT should be relatively suppressed
-    s6k_suppresses_akt = torch.mean(torch.relu(pAKT * pS6K - k_params.get('akt_s6k_product', 0.6))**2)
-    
-    # ==================================================================
-    # CROSSTALK RELATIONSHIPS
-    # ==================================================================
-    
-    # Crosstalk 1: ERK-AKT mutual inhibition
-    # When ERK is high, AKT should be relatively low (and vice versa)
-    # But not too extreme (some co-activation is possible)
-    erk_akt_tradeoff = torch.mean((pERK * pAKT - k_params.get('erk_akt_baseline', 0.5))**2)
-    
-    # Crosstalk 2: AKT suppresses RAF
-    # High AKT with high RAF is inconsistent
-    akt_suppresses_raf = torch.mean(torch.relu(pCRAF * pAKT - k_params.get('raf_akt_product', 0.7))**2)
-    
-    # ==================================================================
-    # COMPENSATORY ACTIVATION
-    # ==================================================================
-    
-    # When MAPK pathway is low, PI3K pathway may be elevated (compensation)
-    # When PI3K pathway is low, MAPK pathway may be elevated
-    # This creates a homeostatic relationship
-    pathway_compensation = torch.mean(
-        torch.relu(k_params.get('min_pathway_sum', 0.8) - (pERK + pAKT))**2
-    )
-    
-    # ==================================================================
-    # DYNAMIC RANGE CONSTRAINTS
-    # ==================================================================
-    
-    # Prevent pathological states where both pathways are maximally suppressed
-    # or maximally activated simultaneously (unless under specific drug conditions)
-    max_suppression = torch.mean(
-        torch.relu(0.1 - pERK) * torch.relu(0.1 - pAKT)
-    )
-    
-    # Total crosstalk loss
-    crosstalk_loss = (
-        0.15 * erk_dusp_feedback +
-        0.12 * s6k_suppresses_akt +
-        0.15 * erk_akt_tradeoff +
-        0.12 * akt_suppresses_raf +
-        0.1 * pathway_compensation +
-        0.08 * max_suppression
-    )
-    
-    return crosstalk_loss
-
-
-def compute_feedback_strength_loss(y_pred_norm, scalers, k_params):
-    """
-    OPTIONAL: Additional loss to ensure feedback loops have appropriate strength.
-    This helps prevent the network from learning weak or non-functional feedbacks.
-    """
-    y = y_pred_norm * scalers['y_std'] + scalers['y_mean']
-    
-    pERK = y[:, 6]
-    DUSP6 = y[:, 7]
-    pAKT = y[:, 8]
-    pS6K = y[:, 9]
-    
-    # Ensure DUSP6 responds to ERK with sufficient sensitivity
-    # If ERK changes, DUSP6 should change
-    dusp6_sensitivity = torch.mean((DUSP6 - k_params.get('dusp6_erk_ratio', 0.9) * pERK)**2)
-    
-    # Ensure S6K is sensitive to AKT (via mTOR)
-    s6k_sensitivity = torch.mean((pS6K - k_params.get('s6k_akt_ratio', 0.75) * pAKT)**2)
-    
-    feedback_strength_loss = 0.1 * (dusp6_sensitivity + s6k_sensitivity)
-    
-    return feedback_strength_loss
-
-
-# ==================================================================
-# USAGE EXAMPLE
-# ==================================================================
-
-def total_loss_function(model, t_data, y_data, drugs_data, t_physics, drugs_physics, 
-                        k_params, scalers, lambda_data=1.0, lambda_physics=0.1, 
-                        lambda_conservation=0.05, lambda_crosstalk=0.05, lambda_feedback=0.02):
-    """
-    Complete loss function combining all components.
-    
-    Args:
-        model: PINN model
-        t_data, y_data, drugs_data: Training data
-        t_physics, drugs_physics: Physics collocation points
-        k_params: Dictionary of kinetic parameters
-        scalers: Normalization parameters
-        lambda_*: Loss weighting hyperparameters
-    
-    Returns:
-        total_loss: Weighted sum of all loss components
-        loss_dict: Dictionary with individual loss values for monitoring
-    """
-    
-    # Data fitting loss (MSE)
-    y_pred_data = model(t_data, drugs_data)
-    data_loss = torch.mean((y_pred_data - y_data)**2)
-    
-    # Physics-informed loss (ODE residuals)
-    physics_loss = compute_physics_loss(model, t_physics, drugs_physics, k_params, scalers)
-    
-    # Get predictions for conservation and crosstalk losses
-    y_pred_physics = model(t_physics, drugs_physics)
-    
-    # Conservation constraints
-    conservation_loss = compute_conservation_loss(y_pred_physics, scalers)
-    
-    # Crosstalk relationships
-    crosstalk_loss = compute_crosstalk_loss(y_pred_physics, scalers, k_params)
-    
-    # Feedback strength (optional)
-    feedback_loss = compute_feedback_strength_loss(y_pred_physics, scalers, k_params)
-    
-    # Total weighted loss
-    total_loss = (
-        lambda_data * data_loss +
-        lambda_physics * physics_loss +
-        lambda_conservation * conservation_loss +
-        lambda_crosstalk * crosstalk_loss +
-        lambda_feedback * feedback_loss
-    )
-    
-    # Return detailed losses for monitoring
-    loss_dict = {
-        'total': total_loss.item(),
-        'data': data_loss.item(),
-        'physics': physics_loss.item(),
-        'conservation': conservation_loss.item(),
-        'crosstalk': crosstalk_loss.item(),
-        'feedback': feedback_loss.item()
-    }
-    
-    return total_loss, loss_dict
