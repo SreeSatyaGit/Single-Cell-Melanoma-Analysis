@@ -63,8 +63,6 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     Km = k.get('Km', 0.5)
     IC50 = k.get('IC50', 0.5)
     n = k.get('hill_coeff', 2.0)
-    
-    # Drug Effects
 
     
     # Tramametinib inhibits MEK

@@ -64,7 +64,7 @@ TRAINING_DATA_LIST: List[Dict[str, Any]] = [
             'pMEK':  np.array([1.936660577,0.029380652,0.012873835,0.03390921,0.095155796,0.944936578]),
             'pERK':  np.array([3.273353557,0.075717978,0.011570416,0.00642985,0.041863585,0.91621491]),
             'DUSP6': np.array([2.854207662,2.842703936,1.163746208,0.332720449,0.030434242,0.094073888]),
-            'pAKT':  np.array([0.527301325,0.614645732,0.95895017,0.895019432,0.412820453,0.269891704]),
+            'pAKT':  np.array([0.527301325,0.614645732,0.95895017,0.895019432,0.312820453,0.0269891704]),
             'pS6K':  np.array([1.385578651,1.388228355,1.286010223,0.720958901,0.12299088,0.028906108]),
             'p4EBP1': np.array([0.793559668,1.176099875,1.210864904,1.415698564,0.858543042,0.167293554])
         },
@@ -100,7 +100,7 @@ TRAINING_DATA_LIST: List[Dict[str, Any]] = [
             'pMEK':  np.array([1.33,0,0,0.3,0.4,1.33]), 
             'pERK':  np.array([1.04,0,0,0.3,0.4,1.04]),
             'DUSP6': np.array([0.7,0.2,0.3,0.2,0.3,0.7]),
-            'pAKT':  np.array([0.1,0.6,0.2,0.7,0.4,0.9]), 
+            'pAKT':  np.array([0.05,0.6,0.05,0.7,0.05,1]), 
             'pS6K':  np.array([1.385578651,1.388228355,1.286010223,0.720958901,0.12299088,0.028906108]),
             'p4EBP1': np.array([0.989227226,0.85,0.76,0.6,0.76,1.45])
         },
@@ -108,7 +108,6 @@ TRAINING_DATA_LIST: List[Dict[str, Any]] = [
     }
 ]
 
-TRAINING_DATA_RAW = TRAINING_DATA_LIST
 
 class SignalingDataset(Dataset):
     """
@@ -128,20 +127,29 @@ class SignalingDataset(Dataset):
 
 def prepare_training_tensors(
     train_until_hour: float = 48.0, 
-    condition_name: Optional[str] = None
+    condition_name: Optional[str] = None,
+    split_mode: str = "holdout",
+    holdout_timepoints: Optional[List[float]] = None
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, torch.Tensor]]:
     """
     Prepares training and testing tensors from raw experimental data.
 
     Args:
-        train_until_hour: Cutoff time for training; data after this is testing.
+        train_until_hour: Cutoff time for training (used in 'cutoff' mode).
         condition_name: If provided, filters to only this condition.
+        split_mode: 'cutoff' = train on t <= train_until_hour,
+                    'holdout' = leave specific timepoints out for testing.
+        holdout_timepoints: List of timepoints (in hours) to hold out for testing.
+                           Only used when split_mode='holdout'. Default: [24.0].
         
     Returns:
         train_data: Dict with keys 't', 'drugs', 'y_norm', 'y_raw'
         test_data: Dict with keys 't', 'drugs', 'y_norm', 'y_raw'
         scalers: Dict with normalization factors
     """
+    if holdout_timepoints is None:
+        holdout_timepoints = [24.0]
+    
     all_t, all_y, all_drugs = [], [], []
     
     # 1. Filter experiments if condition_name is provided
@@ -176,34 +184,38 @@ def prepare_training_tensors(
     y_data = np.concatenate(all_y)
     drugs_data = np.concatenate(all_drugs)
     
-    # 3. Min-Max Normalization (Per-protein)
+    # 3. Min-Max Normalization (computed on ALL data to avoid leakage)
     y_min = np.min(y_data, axis=0)
     y_max = np.max(y_data, axis=0)
     y_range = y_max - y_min
-    
-    # Avoid div by zero
     y_range[y_range == 0] = 1.0
     
-    # Apply normalization: [0, 1]
     y_norm_all = (y_data - y_min) / y_range
     y_norm_all = np.nan_to_num(y_norm_all, nan=0.0, posinf=1.0, neginf=0.0)
     
     t_max = 48.0
     
     # 4. Train/Test Split
-    train_mask = t_data <= train_until_hour
+    if split_mode == "holdout":
+        # Hold out specific timepoints for testing
+        holdout_set = set(holdout_timepoints)
+        test_mask = np.array([t in holdout_set for t in t_data])
+        train_mask = ~test_mask
+    else:
+        # Original cutoff behavior
+        train_mask = t_data <= train_until_hour
     
     def package_data(mask):
         return {
             't': t_data[mask],
             't_norm': (t_data[mask] / t_max).reshape(-1, 1),
             'drugs': drugs_data[mask],
-            'y_norm': y_norm_all[mask],  # Normalized [0, 1]
-            'y_raw': y_data[mask]        # Original scale
+            'y_norm': y_norm_all[mask],
+            'y_raw': y_data[mask]
         }
     
     train_data = package_data(train_mask)
-    test_data = package_data(~train_mask)
+    test_data = package_data(~train_mask if split_mode == "cutoff" else test_mask)
     
     scalers = {
         'y_mean': torch.tensor(y_min, dtype=torch.float32),
@@ -212,6 +224,7 @@ def prepare_training_tensors(
     }
     
     return train_data, test_data, scalers
+
 
 def get_collocation_points(n_points: int = 2000) -> Tuple[torch.Tensor, torch.Tensor]:
     """

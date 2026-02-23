@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 @dataclass
 class ModelConfig:
@@ -25,9 +25,11 @@ class TrainingConfig:
     
     # Data
     train_until_hour: float = 48.0
+    split_mode: str = "holdout"  # "cutoff" = train on t <= train_until_hour, "holdout" = leave specific timepoints out
+    holdout_timepoints: List[float] = field(default_factory=lambda: [4.0, 24.0])  # Timepoints held out for testing
     
     # Optimization
-    num_epochs: int = 50000
+    num_epochs: int = 1400
     learning_rate: float = 1e-4
     weight_decay: float = 1e-5
     lr_decay_gamma: float = 0.9
@@ -44,9 +46,10 @@ class TrainingConfig:
         return {
             "experiment_name": self.experiment_name,
             "seed": self.seed,
+            "split_mode": self.split_mode,
             "train_until_hour": self.train_until_hour,
+            "holdout_timepoints": self.holdout_timepoints,
             "num_epochs": self.num_epochs,
             "learning_rate": self.learning_rate,
             "physics_points": self.num_physics_points,
-            # Add other fields as necessary for logging
         }

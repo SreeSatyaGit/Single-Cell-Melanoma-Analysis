@@ -32,10 +32,17 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
     # 1. Data Preparation
     train_data, test_data, scalers = prepare_training_tensors(
         train_until_hour=config.train_until_hour, 
-        condition_name=condition_name
+        condition_name=condition_name,
+        split_mode=config.split_mode,
+        holdout_timepoints=config.holdout_timepoints
     )
     
-    logger.info(f"Total Training points: {len(train_data['t'])}")
+    logger.info(f"Split mode: {config.split_mode}")
+    if config.split_mode == "holdout":
+        logger.info(f"Holdout timepoints: {config.holdout_timepoints}h")
+    else:
+        logger.info(f"Training cutoff: {config.train_until_hour}h")
+    logger.info(f"Training points: {len(train_data['t'])} | Test points: {len(test_data['t'])}")
     has_test_data = len(test_data['t']) > 0
     
     dataset = SignalingDataset(train_data['t_norm'], train_data['drugs'], train_data['y_norm'])
@@ -154,9 +161,12 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
                 'l_data': l_data.item(),
                 'l_physics': l_physics.item(), 
                 'l_boundary': l_boundary.item(), 
+                'l_conservation': l_conservation.item(),
+                'l_sparsity': l_sparsity.item() if torch.is_tensor(l_sparsity) else l_sparsity,
                 'l_test': l_test
             })
-            progress_bar.set_postfix({'loss': f"{total_loss.item():.2e}", 'data': f"{l_data.item():.2e}"})
+            logger.info(f"Epoch {epoch}: Total={total_loss.item():.2e} | Data={l_data.item():.2e} | Phys={l_physics.item():.2e} | Bound={l_boundary.item():.2e} | Cons={l_conservation.item():.2e} | Spar={l_sparsity.item() if torch.is_tensor(l_sparsity) else l_sparsity:.2e} | Test={l_test:.2e}")
+            progress_bar.set_postfix({'loss': f"{total_loss.item():.2e}", 'data': f"{l_data.item():.2e}", 'phys': f"{l_physics.item():.2e}"})
             
             if total_loss.item() < best_loss:
                 best_loss = total_loss.item()
