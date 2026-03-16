@@ -1,147 +1,86 @@
-# Physics-Informed Neural Network (PINN) for Cancer Signaling
+# Physics-Informed Neural Networks (PINN) for Cancer Signaling Dynamics
 
-## Project Overview
+## Overview
 
-This project implements a Physics-Informed Neural Network (PINN) to predict drug combination responses in cancer signaling pathways (MAPK and PI3K). The model is trained on experimental Western Blot data and constrained by biological Ordinary Differential Equations (ODEs).
+This repository provides a framework for modeling cancer signaling pathway dynamics using **Physics-Informed Neural Networks (PINNs)**. The model integrates experimental measurements with mechanistic Ordinary Differential Equations (ODEs) to predict the response of melanoma cells to various drug combinations.
 
-## Current Focus: Temporal Extrapolation
+The framework is specifically designed to handle **temporal and drug-combination extrapolation**, leveraging biological constraints to generalize beyond the training distribution.
 
-**Training Setup:**
-- Drug Combination: **Vemurafenib (0.5) + Trametinib (0.3)**
-- Training Data: Time points **[0, 1, 4, 8 hours]** (4 points)
-- Test Data: Time points **[24, 48 hours]** (2 held-out points)
-- Objective: Train on early time points and **extrapolate** to late time points
+## Key Features
 
-This experimental design tests the model's ability to learn biological dynamics from limited early observations and predict future states.
+- **Mechanistic Integration**: Embeds 10-species ODE systems (MAPK & PI3K/AKT pathways) directly into the neural network loss function.
+- **Global Modeling**: A single model trained across multiple drug conditions (Vemurafenib, Trametinib, PI3Ki, panRASi) to learn universal kinetic parameters.
+- **PINN-ODE Hybrid Perturbation**: A robust two-phase simulation framework:
+  1. **Phase 1 (PINN)**: Accurately predicts response under known training conditions.
+  2. **Phase 2 (ODE)**: Uses learned physics to simulate novel drug perturbations (e.g., adding a third drug at a specific time point).
+- **Dose-Response Mapping**: Tools for generating in-silico dose-response surfaces and steady-state analyses.
 
-### Full-Range Training Option
+## Signaling Model
 
-To fit **all available time points (0–48h)** before running inference on new drug combinations, set:
+The biological network modeled includes:
+- **MAPK Pathway**: RTK → RAS → pCRAF → pMEK → pERK
+- **PI3K/AKT Pathway**: RTK → pAKT → p4EBP1
+- **Feedback & Crosstalk**: 
+  - Dual-specificity phosphatase (DUSP6) induction by ERK (negative feedback).
+  - AKT-mediated inhibition of CRAF.
+  - ERK-mediated inhibition of upstream signaling (SOS/RTK).
+  - Paradoxical activation of RAF by BRAF inhibitors.
 
-```python
-config = {
-    'train_until_hour': 48,
-    # other hyperparameters...
-}
+## Repository Structure
+
+```text
+.
+├── pinn_model.py              # PINN architecture with drug-embedding layers
+├── physics_utils.py           # Mechanistic ODE system and physics loss terms
+├── data_utils.py              # Experimental data management and normalization
+├── config.py                  # Dataclass-based training configurations
+├── train_pinn.py              # Training loop with physics-informed constraints
+├── main.py                    # Pipeline entry point for model training
+├── perturbation_experiment.py # PINN-ODE hybrid simulation for novel perturbations
+├── inference.py               # Model loading and custom prediction utilities
+├── simulate_no_drug.py        # Steady-state analysis from initial conditions
+├── simulate_dosages.py        # Systematic dose-sweep simulations (e.g., Vem + Tram)
+├── visualize_extrapolation.py # Publication-quality fit diagnostics
+├── requirements.txt           # Python dependencies
+└── README.md                  # This documentation
 ```
 
-This removes the temporal holdout split and trains on the full dataset.
+## Getting Started
 
-## Project Structure
-
-```
-PINN_Drug_Response/
-│
-├── pinn_model.py              # Neural network architecture
-├── physics_utils.py           # ODE constraints and physics loss
-├── data_utils.py              # Data loading with train/test split
-├── train_pinn.py              # Training loop with extrapolation
-├── visualize_extrapolation.py # Specialized visualization for train/test
-├── main.py                    # Main execution script
-├── requirements.txt           # Dependencies
-└── README.md                  # This file
-```
-
-## Biological Context
-
-The model tracks 11 signaling species across MAPK and PI3K pathways:
-
-**MAPK Pathway:**
-- Receptors → RAS → RAF(pCRAF) → MEK(pMEK) → ERK(pERK)
-- Negative feedback: ERK induces DUSP6 → inhibits ERK
-
-**PI3K Pathway:**
-- Receptors → PI3K → AKT(pAKT) → mTOR → S6K(pS6K) / 4EBP1(p4EBP1)
-- mTOR feedback: S6K inhibits IRS1
-
-**Crosstalk:**
-- AKT inhibits RAF (pathway suppression)
-- ERK inhibits PI3K (compensatory activation)
-- RAF activates PI3K (paradoxical activation)
-
-**Drug Mechanisms:**
-- **Vemurafenib**: BRAF inhibitor (with paradoxical activation at low doses)
-- **Trametinib**: MEK inhibitor
-
-## Installation
+### Installation
 
 ```bash
-cd /Users/bharadwajanandivada/SCMPA/PINN_Drug_Response
 pip install -r requirements.txt
 ```
 
-## Usage
-
-
-### Basic Training and Extrapolation
-
+### 1. Training the Global Model
+To train the model on all experimental conditions and generate fit reports:
 ```bash
 python main.py
 ```
 
-This will:
-1. Train a global PINN model on all available drug conditions.
-2. Evaluate performance on any held-out test data.
-3. Generate comprehensive visualization plots for each condition.
-4. Save the trained model and history to `results/nature_submission/`.
-
-### Making Conceptions (Inference)
-
-To predict pathway response to a **new custom drug combination** without retraining:
-
+### 2. Running a Perturbation Experiment
+To simulate adding a PI3K inhibitor (0.5µM) at $t=80h$ after initial Vem+Tram treatment:
 ```bash
-python inference.py --model results/nature_submission/pinn_model_global.pth \
-  --vemurafenib 0.5 \
-  --trametinib 0.1 \
-  --pi3k 0.0 \
-  --ras 0.0 \
-  --output custom_prediction.png
+python perturbation_experiment.py --t_switch 80 --pi3k_dose 0.5 --t_end 200
+```
+This generates:
+- **Phase 1 (PINN)**: Trajectory up to time of perturbation.
+- **Phase 2 (ODE)**: Mechanistic extrapolation under the new drug condition.
+
+### 3. Systematic Dose Analysis
+To simulate the entire 6x5 dose-response grid for Vemurafenib and Trametinib:
+```bash
+python simulate_dosages.py
 ```
 
-This generates a plot and CSV file for the specified dosage.
+## Performance & Validation
+The model tracks training loss across several components:
+- **Data Loss**: Alignment with experimental Western Blot points.
+- **Physics Loss**: Violation of the underlying ODE system.
+- **Steady-State Loss**: Constraint for basal stability at $t=0$.
 
-### Output Files
-
-Results are saved in `results/nature_submission/`:
-
-- `pinn_model_global.pth` - Best model checkpoint.
-- `history_global.png` - Training vs Test loss curves.
-- `fit_{condition}.png` - Plots showing model fit vs experimental data.
-- `table_{condition}.csv` - Detailed numerical predictions.
-
-## Hyperparameter Tuning
-
-Configuration is managed in `config.py` using dataclasses for type safety and clarity.
-
-To modify training parameters, edit `config.py`:
-
-```python
-@dataclass
-class TrainingConfig:
-    # Experiment
-    output_dir: str = "results/nature_submission"
-    
-    # Optimization
-    num_epochs: int = 50000
-    learning_rate: float = 1e-4
-    
-    # Physics
-    num_physics_points: int = 2000
-    
-    # Weights are in the LossWeights class
-    weights: LossWeights = field(default_factory=LossWeights)
-```
-
-## Next Steps
-
-1. **Current Focus**: Vem+Tram extrapolation → validate model
-2. **Future**: Predict new drug combinations (PI3Ki+Vem)
-3. **Advanced**: Uncertainty quantification with ensembles
+Results and model checkpoints are stored in `results/nature_submission/` (configurable).
 
 ## Citation
-
-If you use this code, please cite the underlying experimental data source and acknowledge the PINN methodology.
-
-## Contact
-
-For questions about this implementation, contact the project maintainer.
+If you utilize this framework in your research, please cite our study on [insert publication link/DOI].
