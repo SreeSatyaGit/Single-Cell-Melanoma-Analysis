@@ -147,14 +147,18 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
             print("No training data available for this condition (pure extrapolation).")
 def plot_training_history(history_file='training_history.csv', save_path='training_test_history.png'):
     """Plot training and test loss over epochs."""
+    if not os.path.exists(history_file):
+        print(f"Warning: {history_file} not found.")
+        return None
+        
     history = pd.read_csv(history_file)
     has_test_data = history['l_test'].notna().any()
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     ax = axes[0]
     ax.plot(history['epoch'], history['loss'], label='Total Loss', linewidth=2)
-    ax.plot(history['epoch'], history['l_data'], label='Data Loss (Train)', linewidth=2)
+    ax.plot(history['epoch'], history['l_data'], label='Data Loss (Train Agents)', linewidth=2)
     if has_test_data:
-        ax.plot(history['epoch'], history['l_test'], label='Data Loss (Test)', linewidth=2, linestyle='--')
+        ax.plot(history['epoch'], history['l_test'], label='Gen. Loss (Combo)', linewidth=2, linestyle='--')
     ax.plot(history['epoch'], history['l_physics'], label='Physics Loss', linewidth=2, alpha=0.7)
     ax.set_yscale('log')
     ax.set_xlabel('Epoch', fontsize=12)
@@ -163,13 +167,13 @@ def plot_training_history(history_file='training_history.csv', save_path='traini
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
     ax = axes[1]
-    ax.plot(history['epoch'], history['l_data'], label='Train Loss', linewidth=2, color='green')
+    ax.plot(history['epoch'], history['l_data'], label='Train (Sgl Agents)', linewidth=2, color='green')
     if has_test_data:
-        ax.plot(history['epoch'], history['l_test'], label='Test Loss (Extrapolation)', linewidth=2, color='red')
+        ax.plot(history['epoch'], history['l_test'], label='Test (Combo)', linewidth=2, color='red')
     ax.set_yscale('log')
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('MSE Loss', fontsize=12)
-    ax.set_title('Train vs Test Performance', fontsize=14, fontweight='bold')
+    ax.set_title('Generalization: Single -> Combo', fontsize=14, fontweight='bold')
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -242,7 +246,7 @@ def generate_prediction_table(
     for t_idx, t_val in enumerate(all_times):
         split_label = 'Test' if round(float(t_val), 4) in test_times_set else 'Train'
         for species_idx, species in enumerate(SPECIES_ORDER):
-            true_norm = all_y_true_norm[t_idx, species_idx]
+            true_norm = test_data['y_norm'][t_idx, species_idx]
             pred_norm = y_pred_norm[t_idx, species_idx]
             results.append({
                 'Time (hrs)': t_val,
