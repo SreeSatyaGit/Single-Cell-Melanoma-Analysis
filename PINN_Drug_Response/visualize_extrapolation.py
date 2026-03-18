@@ -109,6 +109,9 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
                       color='red', s=100, marker='s',
                       label=f'Test (R²={r2_test[i]:.3f})',
                       zorder=5, edgecolors='darkred', linewidths=2)
+        ax.set_title(species, fontsize=11, fontweight='bold', pad=4)
+        ax.set_xlabel('Time (h)', fontsize=9)
+        ax.set_ylabel('Normalized intensity', fontsize=9)
     if len(axes) > len(SPECIES_ORDER):
         axes[-1].axis('off')
     title = f'PINN Global Model - Fit for: {condition_name}'

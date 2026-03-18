@@ -56,17 +56,17 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
     param_defaults = {
         'IC50_vem': 0.8, 'IC50_tram': 0.3, 'IC50_pi3k': 0.5, 'IC50_ras': 0.5,
         'hill_coeff': 2.0, 'k_paradox': 0.25,
-        'k_egfr': 0.5, 'k_egfr_deg': 0.2, 'k_her2': 0.4, 'k_her2_deg': 0.15,
-        'k_her3': 0.4, 'k_her3_deg': 0.15, 'k_igf': 0.3, 'k_igf_deg': 0.2,
+        'k_egfr': 0.5, 'k_egfr_deg': 0.2, 'k_her2': 0.4, 'k_her2_deg': 0.15, 'k_her2_tx': 0.5,
+        'k_her3': 0.4, 'k_her3_deg': 0.15, 'k_her3_tx': 0.3, 'k_igf': 0.3, 'k_igf_deg': 0.2,
         'k_erk_rtk': 0.1, 'Km_rtk': 0.5, 'k_up': 0.3,
         'k_erk_sos': 0.4, 'Km_sos': 0.5, 'k_akt_rtk': 0.15, 'Km_artk': 0.5,
         'k_craf': 1.2, 'k_craf_deg': 0.35, 'k_mek': 1.0, 'k_mek_deg': 0.4,
         'k_erk': 1.2, 'k_erk_deg': 0.45, 'k_dusp_synth': 0.8, 'k_dusp_deg': 0.5,
         'k_dusp_cat': 0.6, 'Km_dusp': 0.4, 'Km_dusp_s': 0.4, 'n_dusp': 2.0,
-        'k_raf_pi3k': 0.2, 'Km_raf_pi3k': 0.5, 'k_erk_pi3k': 0.45, 'Km_erk_pi3k': 0.5,
+        'k_raf_pi3k': 0.2, 'Km_raf_pi3k': 0.5, 'k_ras_pi3k_frac': 0.3, 'k_erk_pi3k': 0.45, 'Km_erk_pi3k': 0.5,
         'k_akt': 1.0, 'k_akt_deg': 0.4,
-        'k_4ebp1': 0.85, 'k_4ebp1_deg': 0.45,
-        'k_4ebp1_comp': 0.25, 'Km_4ebp1': 0.5, 'k_akt_raf': 0.5,
+        'k_4ebp1': 0.85, 'k_4ebp1_deg': 0.05,
+        'k_4ebp1_comp': 0.05, 'Km_4ebp1': 0.5, 'k_akt_raf': 0.5,
         'Km_akt_raf': 0.5,
         'K_sat_egfr': 1.0, 'K_sat_her2': 2.0, 'K_sat_her3': 2.0, 'K_sat_igfr': 1.5,
         'K_sat_craf': 3.0, 'K_sat_mek': 2.5, 'K_sat_erk': 3.5,
@@ -106,7 +106,7 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
         drugs_jittered = drugs_data_batch + jitter
         y_pred = model(t_data_batch, drugs_jittered)
         l_data = mse_loss(y_pred, y_exp_batch)
-        phys_weight_multiplier = min(1.0, (epoch + 1) / (config.num_epochs * 0.3))
+        phys_weight_multiplier = min(1.0, (epoch + 1) / (config.num_epochs * 0.2))
         current_phys_weight = config.weights.physics * phys_weight_multiplier
         l_physics = compute_physics_loss(model, t_physics, drugs_physics, k_params, scalers_device)
         idx0 = (t_data_batch == 0).squeeze(dim=1)

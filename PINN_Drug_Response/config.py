@@ -10,12 +10,12 @@ class ModelConfig:
 
 @dataclass
 class LossWeights:
-    data: float = 10.0
-    physics: float = 1.0
-    boundary: float = 5.0
-    conservation: float = 0.1
+    data: float = 5.0
+    physics: float = 10.0
+    boundary: float = 3.0
+    conservation: float = 1.0
     sparsity: float = 0.001
-    steady_state: float = 2.0
+    steady_state: float = 25.0
 
 @dataclass
 class TrainingConfig:
@@ -27,7 +27,7 @@ class TrainingConfig:
     split_mode: str = "partial_condition_holdout"
     holdout_timepoints: List[float] = field(default_factory=lambda: [4.0, 24.0])
     holdout_condition: str = "Vem + PI3Ki Combo"
-    partial_condition_train_timepoints: List[float] = field(default_factory=lambda: [0.0, 4.0])
+    partial_condition_train_timepoints: List[float] = field(default_factory=lambda: [0.0, 1.0, 4.0])
     
     num_epochs: int = 5000
     learning_rate: float = 1e-4
@@ -35,7 +35,7 @@ class TrainingConfig:
     lr_decay_gamma: float = 0.9
     lr_decay_step: int = 1000
     
-    num_physics_points: int = 2000
+    num_physics_points: int = 5000
     
     model: ModelConfig = field(default_factory=ModelConfig)
     weights: LossWeights = field(default_factory=LossWeights)

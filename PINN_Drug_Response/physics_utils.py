@@ -29,8 +29,9 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
         'k_akt_rtk', 'Km_artk', 'k_craf', 'k_craf_deg', 'k_mek', 'k_mek_deg',
         'k_erk', 'k_erk_deg', 'k_dusp_synth', 'k_dusp_deg', 'k_dusp_cat',
         'Km_dusp', 'Km_dusp_s', 'n_dusp', 'k_raf_pi3k', 'Km_raf_pi3k',
-        'k_erk_pi3k', 'Km_erk_pi3k', 'k_akt', 'k_akt_deg', 'k_4ebp1',
-        'k_4ebp1_deg', 'k_akt_raf', 'Km_akt_raf',
+        'k_erk_pi3k', 'Km_erk_pi3k', 'k_akt', 'k_akt_deg', 
+        'k_4ebp1', 'k_4ebp1_deg', 'k_4ebp1_comp', 'Km_4ebp1', 'k_akt_raf', 'Km_akt_raf',
+        'k_her2_tx', 'k_her3_tx', 'k_ras_pi3k_frac',
         'K_sat_egfr', 'K_sat_her2', 'K_sat_her3', 'K_sat_igfr',
         'K_sat_craf', 'K_sat_mek', 'K_sat_erk', 'K_sat_akt', 'K_sat_4ebp1',
         'w_egfr', 'w_her2', 'w_her3', 'w_igf1r', 'w_craf',
@@ -82,7 +83,15 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     K_sat_4ebp1 = torch.abs(k_params['K_sat_4ebp1'])
     k_paradox = torch.abs(k_params['k_paradox'])
     pCRAF_floored = pCRAF.clamp(min=0.05)  # biological floor: pCRAF cannot be below baseline
-    Vem_paradox = k_paradox * Vem * K_sat_craf / (K_sat_craf + pCRAF_floored + 1e-8)
+    # Vem_paradox: paradoxical CRAF activation under BRAF inhibitor.
+    # PI3K inhibition directly attenuates this by blocking PI3K-dependent
+    # RAS-GTP loading that amplifies the paradoxical effect.
+    # PI3Ki_effect is already computed above and ranges from 0 (no drug) to 1 (full inhibition).
+    # Attenuation is partial (floor of 0.3) since RAS-independent paradox still occurs.
+    # This only affects conditions where PI3Ki > 0, leaving all other conditions unchanged.
+    pi3ki_attenuation = 1.0 - 0.7 * PI3Ki_effect
+    Vem_paradox = (k_paradox * Vem * K_sat_craf / (K_sat_craf + pCRAF_floored + 1e-8)
+                   * pi3ki_attenuation)
 
     k_erk_rtk = torch.abs(k_params['k_erk_rtk'])
     Km_rtk = torch.abs(k_params['Km_rtk'])
@@ -103,7 +112,13 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     Km_erk_pi3k = torch.abs(k_params['Km_erk_pi3k'])
     RAF_to_PI3K = k_raf_pi3k * pCRAF / (Km_raf_pi3k + pCRAF + 1e-8)
     ERK_to_PI3K = k_erk_pi3k * pERK / (Km_erk_pi3k + pERK + 1e-8)
-    PI3K_input  = RTK_total * (1.0 - ERK_to_PI3K) + RAF_to_PI3K
+    k_ras_pi3k_frac = torch.abs(k_params['k_ras_pi3k_frac'])
+    # k_ras_pi3k_frac: fraction of RTK->PI3K signaling that is RAS-dependent.
+    # In BRAF V600E cells, p110alpha can be activated directly by RTK adaptors
+    # (IRS1/Gab1) without requiring RAS. Only the RAS-dependent fraction
+    # (k_ras_pi3k_frac) is attenuated by panRAS inhibition.
+    # When RasInh=0 (all non-panRAS conditions): Ras_effect=0 -> reduces to original.
+    PI3K_input = RTK_total * (1.0 - ERK_to_PI3K) * (1.0 - k_ras_pi3k_frac * Ras_effect) + RAF_to_PI3K
     k_akt_raf = torch.abs(k_params['k_akt_raf'])
     Km_akt_raf = torch.abs(k_params['Km_akt_raf'])
     AKT_RAF_inhib  = k_akt_raf * pAKT / (Km_akt_raf + pAKT + 1e-8)
@@ -112,13 +127,35 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     res_pEGFR = dy_dt[:, 0] - (k_egfr * (1.0 + drug_relief) * K_sat_egfr / (K_sat_egfr + pEGFR + 1e-8) - (k_egfr_deg + ERK_feedback) * pEGFR)
     k_her2 = torch.abs(k_params['k_her2'])
     k_her2_deg = torch.abs(k_params['k_her2_deg'])
-    res_HER2  = dy_dt[:, 1] - (k_her2 * (1.0 + drug_relief) * K_sat_her2 / (K_sat_her2 + HER2 + 1e-8) - (k_her2_deg + ERK_feedback) * HER2)
+    k_her2_tx = torch.abs(k_params['k_her2_tx'])
+    # ERK-suppression-driven HER2 transcriptional upregulation.
+    # When ERK is chronically suppressed by drug, HER2 transcription is de-repressed.
+    # (1 - pERK/(K_sat_erk+pERK)) -> ~1.0 when ERK is low, ~0.5 at baseline.
+    # K_sat_erk is defined above in the K_sat block.
+    res_HER2 = dy_dt[:, 1] - (
+        k_her2 * (1.0 + drug_relief) * K_sat_her2 / (K_sat_her2 + HER2 + 1e-8)
+        + k_her2_tx * (1.0 - pERK / (K_sat_erk + pERK + 1e-8))
+        - (k_her2_deg + ERK_feedback) * HER2
+    )
     k_her3 = torch.abs(k_params['k_her3'])
     k_her3_deg = torch.abs(k_params['k_her3_deg'])
-    res_HER3  = dy_dt[:, 2] - (k_her3 * (1.0 + 2.0 * drug_relief) * K_sat_her3 / (K_sat_her3 + HER3 + 1e-8) - (k_her3_deg + ERK_feedback) * HER3)
+    k_her3_tx = torch.abs(k_params['k_her3_tx'])
+    # ERK-suppression-driven HER3 transcriptional upregulation.
+    # Same mechanism as HER2 — HER3 is co-upregulated under sustained ERK suppression.
+    # The 2.0 multiplier on drug_relief for HER3 is preserved from the original ODE.
+    res_HER3 = dy_dt[:, 2] - (
+        k_her3 * (1.0 + 2.0 * drug_relief) * K_sat_her3 / (K_sat_her3 + HER3 + 1e-8)
+        + k_her3_tx * (1.0 - pERK / (K_sat_erk + pERK + 1e-8))
+        - (k_her3_deg + ERK_feedback) * HER3
+    )
     k_igf = torch.abs(k_params['k_igf'])
     k_igf_deg = torch.abs(k_params['k_igf_deg'])
-    res_IGF1R = dy_dt[:, 3] - (k_igf * (1.0 + drug_relief) * K_sat_igfr / (K_sat_igfr + IGF1R + 1e-8) - (k_igf_deg + ERK_feedback) * IGF1R)
+    # FIXED: AKT_to_RTK added to IGF1R degradation term.
+    # Biological basis: AKT phosphorylates IRS1 (negative feedback), causing
+    # IGF1R receptor downregulation. When pAKT is suppressed (e.g. under PI3Ki),
+    # this feedback is lost and IGF1R is disinhibited (upregulated).
+    # AKT_to_RTK is already computed above: k_akt_rtk * pAKT / (Km_artk + pAKT)
+    res_IGF1R = dy_dt[:, 3] - (k_igf * (1.0 + drug_relief) * K_sat_igfr / (K_sat_igfr + IGF1R + 1e-8) - (k_igf_deg + ERK_feedback + AKT_to_RTK) * IGF1R)
     k_craf = torch.abs(k_params['k_craf'])
     k_craf_deg = torch.abs(k_params['k_craf_deg'])
     res_pCRAF = dy_dt[:, 4] - (k_craf * RAS_GTP * (1.0 - Vem_inhibition) * K_sat_craf / (K_sat_craf + pCRAF + 1e-8) + Vem_paradox - (k_craf_deg + AKT_RAF_inhib) * pCRAF)
@@ -140,9 +177,19 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     k_akt = torch.abs(k_params['k_akt'])
     k_akt_deg = torch.abs(k_params['k_akt_deg'])
     res_pAKT  = dy_dt[:, 8] - (k_akt * PI3K_input * (1.0 - PI3Ki_effect) * K_sat_akt / (K_sat_akt + pAKT + 1e-8) - k_akt_deg * pAKT)
+    # p4EBP1 ODE with AKT-dependent synthesis plus basal phosphorylation floor.
+    # k_4ebp1_comp: basal (AKT-independent) phosphorylation rate representing
+    #               mTORC2/CDK1-mediated 4EBP1 phosphorylation that persists
+    #               even when pAKT is suppressed under PI3Ki treatment.
+    #               Prevents p4EBP1 -> 0 when AKT collapses.
     k_4ebp1 = torch.abs(k_params['k_4ebp1'])
     k_4ebp1_deg = torch.abs(k_params['k_4ebp1_deg'])
-    res_p4EBP1 = dy_dt[:, 9] - (k_4ebp1 * pAKT * K_sat_4ebp1 / (K_sat_4ebp1 + p4EBP1 + 1e-8) - k_4ebp1_deg * p4EBP1)
+    k_4ebp1_basal = torch.abs(k_params['k_4ebp1_comp'])   # reuse existing param
+    res_p4EBP1 = dy_dt[:, 9] - (
+        k_4ebp1 * pAKT * K_sat_4ebp1 / (K_sat_4ebp1 + p4EBP1 + 1e-8)
+        + k_4ebp1_basal
+        - k_4ebp1_deg * p4EBP1
+    )
     physics_loss = (
         torch.abs(k_params['w_egfr']) * torch.mean(res_pEGFR**2) +
         torch.abs(k_params['w_her2']) * torch.mean(res_HER2**2) +
