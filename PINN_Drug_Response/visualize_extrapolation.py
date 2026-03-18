@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+from typing import Optional, Dict
+
 from pinn_model import PINN
 from data_utils import SPECIES_ORDER, TRAINING_DATA_LIST
 import seaborn as sns
@@ -17,16 +19,30 @@ def load_pinn_with_data(filepath, device='cpu'):
     model.load_state_dict(state_dict)
     scalers = checkpoint['scalers']
     train_data = checkpoint.get('train_data', None)
-    test_data = checkpoint.get('test_data', None)
+    test_data  = checkpoint.get('test_data', None)
+
+    # Derive drug vector from saved condition_name, not from row 0 of train_data
+    condition_name = checkpoint.get('condition_name', None)
     drugs_dict = None
-    if train_data is not None and 'drugs' in train_data:
-        drugs_vec = train_data['drugs'][0]
+    if condition_name and condition_name != 'global':
+        match = [e for e in TRAINING_DATA_LIST if e['name'] == condition_name]
+        if match:
+            drugs_dict = match[0]['drugs']
+    
+    # Fallback: if global model or condition not found, extract unique drug
+    # vectors from train_data and use the one with highest drug sum
+    # (most treated condition, avoids picking the No Drug row)
+    if drugs_dict is None and train_data is not None and 'drugs' in train_data:
+        unique_drugs = np.unique(train_data['drugs'], axis=0)
+        drug_sums = unique_drugs.sum(axis=1)
+        best = unique_drugs[np.argmax(drug_sums)]
         drugs_dict = {
-            'vemurafenib': float(drugs_vec[0]),
-            'trametinib': float(drugs_vec[1]),
-            'pi3k_inhibitor': float(drugs_vec[2]),
-            'ras_inhibitor': float(drugs_vec[3])
+            'vemurafenib':  float(best[0]),
+            'trametinib':   float(best[1]),
+            'pi3k_inhibitor': float(best[2]),
+            'ras_inhibitor':  float(best[3])
         }
+
     return model, scalers, train_data, test_data, drugs_dict
 def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extrapolation_results.png', drugs_dict_override=None):
     """
@@ -69,8 +85,10 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
         else:
             has_test_data = False
     def compute_r2(y_true, y_pred):
-        ss_res = np.sum((y_true - y_pred)**2, axis=0)
-        ss_tot = np.sum((y_true - np.mean(y_true, axis=0))**2, axis=0)
+        if y_true.shape[0] <= 1:
+            return np.full(y_true.shape[1], np.nan)
+        ss_res = np.sum((y_true - y_pred) ** 2, axis=0)
+        ss_tot = np.sum((y_true - np.mean(y_true, axis=0)) ** 2, axis=0)
         return 1 - (ss_res / (ss_tot + 1e-8))
     r2_train = compute_r2(y_plot, y_train_pred) if y_plot is not None else None
     r2_test = compute_r2(cond_test_y, y_test_pred) if has_test_data and cond_test_y is not None else None
@@ -103,15 +121,25 @@ def plot_extrapolation_results(model_path='pinn_model_best.pth', save_path='extr
     if has_test_data:
         print("\n=== EXTRAPOLATION PERFORMANCE SUMMARY ===")
         if r2_train is not None:
-            print(f"Training R² (mean): {np.mean(r2_train):.3f} ± {np.std(r2_train):.3f}")
-        print(f"Test R² (mean): {np.mean(r2_test):.3f} ± {np.std(r2_test):.3f}")
-        print("\nPer-species Test R²:")
-        for species, r2 in zip(SPECIES_ORDER, r2_test):
-            print(f"  {species:10s}: {r2:.3f}")
+            valid = r2_train[~np.isnan(r2_train)]
+            if len(valid) > 0:
+                print(f"Training R² (mean): {np.mean(valid):.3f} ± {np.std(valid):.3f}")
+            else:
+                print("Training R² (mean): N/A (single data point)")
+        if r2_test is not None:
+            print(f"Test R² (mean): {np.mean(r2_test[~np.isnan(r2_test)]):.3f} ± {np.std(r2_test[~np.isnan(r2_test)]):.3f}")
+            print("\nPer-species Test R²:")
+            for species, r2 in zip(SPECIES_ORDER, r2_test):
+                val_str = f"{r2:.3f}" if not np.isnan(r2) else "N/A"
+                print(f"  {species:10s}: {val_str}")
     else:
         print("\n=== TRAINING FIT SUMMARY ===")
         if r2_train is not None:
-            print(f"Training R² (mean): {np.mean(r2_train):.3f} ± {np.std(r2_train):.3f}")
+            valid = r2_train[~np.isnan(r2_train)]
+            if len(valid) > 0:
+                print(f"Training R² (mean): {np.mean(valid):.3f} ± {np.std(valid):.3f}")
+            else:
+                print("Training R² (mean): N/A (single data point)")
         else:
             print("No training data available for this condition (pure extrapolation).")
 def plot_training_history(history_file='training_history.csv', save_path='training_test_history.png'):
@@ -145,21 +173,71 @@ def plot_training_history(history_file='training_history.csv', save_path='traini
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"Saved training history to {save_path}")
     plt.close()
-def generate_prediction_table(model_path='pinn_model_best.pth', save_path='predictions_table.csv'):
+def generate_prediction_table(
+    model_path: str = 'pinn_model_best.pth',
+    save_path: str = 'predictions_table.csv',
+    drugs_dict_override: Optional[Dict[str, float]] = None,
+) -> pd.DataFrame:
     """Generate detailed prediction table for a specific model."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model, scalers, train_data, test_data, drugs_dict = load_pinn_with_data(model_path, device)
-    if drugs_dict is None:
-        drugs_dict = TRAINING_DATA_LIST[0]['drugs']
+    model, scalers, train_data, test_data, drugs_dict_loaded = load_pinn_with_data(model_path, device)
+    
+    final_drugs = drugs_dict_override if drugs_dict_override is not None else drugs_dict_loaded
+    if final_drugs is None:
+        raise ValueError("No drug vector available. Pass drugs_dict_override explicitly.")
+
+    target_vec = np.array([
+        final_drugs['vemurafenib'],
+        final_drugs['trametinib'],
+        final_drugs['pi3k_inhibitor'],
+        final_drugs['ras_inhibitor'],
+    ], dtype=np.float32)
+
     has_test_data = test_data is not None and len(test_data.get('t', [])) > 0
-    all_times = np.concatenate([train_data['t'], test_data['t']]) if has_test_data else train_data['t']
-    all_y_true_norm = np.concatenate([train_data['y_norm'], test_data['y_norm']]) if has_test_data else train_data['y_norm']
-    all_y_true_raw = np.concatenate([train_data['y_raw'], test_data['y_raw']]) if has_test_data else train_data['y_raw']
-    y_pred_norm = model.predict(all_times, drugs_dict, scalers, device, normalized=True)
-    y_pred_raw = model.predict(all_times, drugs_dict, scalers, device, normalized=False)
+
+    # Filter train_data to this condition only
+    train_mask = np.all(np.abs(train_data['drugs'] - target_vec) < 1e-4, axis=1)
+    t_train_cond      = train_data['t'][train_mask]
+    y_train_norm_cond = train_data['y_norm'][train_mask]
+    y_train_raw_cond  = train_data['y_raw'][train_mask]
+
+    # Filter test_data to this condition only
+    if has_test_data:
+        test_mask = np.all(np.abs(test_data['drugs'] - target_vec) < 1e-4, axis=1)
+        if np.any(test_mask):
+            t_test_cond      = test_data['t'][test_mask]
+            y_test_norm_cond = test_data['y_norm'][test_mask]
+            y_test_raw_cond  = test_data['y_raw'][test_mask]
+        else:
+            t_test_cond      = np.array([])
+            y_test_norm_cond = np.empty((0, 10))
+            y_test_raw_cond  = np.empty((0, 10))
+    else:
+        t_test_cond      = np.array([])
+        y_test_norm_cond = np.empty((0, 10))
+        y_test_raw_cond  = np.empty((0, 10))
+
+    test_times_set = set(np.round(t_test_cond, 4))
+
+    if len(t_test_cond) > 0:
+        all_times  = np.concatenate([t_train_cond, t_test_cond])
+        all_y_true_norm = np.concatenate([y_train_norm_cond, y_test_norm_cond])
+        all_y_true_raw  = np.concatenate([y_train_raw_cond,  y_test_raw_cond])
+    else:
+        all_times  = t_train_cond
+        all_y_true_norm = y_train_norm_cond
+        all_y_true_raw  = y_train_raw_cond
+
+    if len(all_times) == 0:
+        print(f"Warning: no data found for drug vector {target_vec}. Skipping.")
+        return pd.DataFrame()
+
+    y_pred_norm = model.predict(all_times, final_drugs, scalers, device, normalized=True)
+    y_pred_raw = model.predict(all_times, final_drugs, scalers, device, normalized=False)
+    
     results = []
     for t_idx, t_val in enumerate(all_times):
-        is_train = t_val <= 8 if has_test_data else True
+        split_label = 'Test' if round(float(t_val), 4) in test_times_set else 'Train'
         for species_idx, species in enumerate(SPECIES_ORDER):
             true_norm = all_y_true_norm[t_idx, species_idx]
             pred_norm = y_pred_norm[t_idx, species_idx]
@@ -172,7 +250,7 @@ def generate_prediction_table(model_path='pinn_model_best.pth', save_path='predi
                 'Predicted Value (Raw)': y_pred_raw[t_idx, species_idx],
                 'Error': true_norm - pred_norm,
                 'Percent Error': 100 * (true_norm - pred_norm) / (true_norm + 1e-6),
-                'Dataset': 'Train' if is_train else 'Test'
+                'Dataset': split_label
             })
     df = pd.DataFrame(results)
     df.to_csv(save_path, index=False)

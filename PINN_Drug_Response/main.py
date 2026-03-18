@@ -39,7 +39,8 @@ def main():
             )
             generate_prediction_table(
                 model_path=model_path,
-                save_path=f"{config.output_dir}/table_{cond_id}.csv"
+                save_path=f"{config.output_dir}/table_{cond_id}.csv",
+                drugs_dict_override=drugs_override
             )
         logger.info(f"\n✓ Pipeline complete. All artifacts saved to {config.output_dir}/")
     else:

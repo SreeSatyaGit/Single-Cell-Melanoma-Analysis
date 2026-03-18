@@ -27,11 +27,15 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
         train_until_hour=config.train_until_hour,
         condition_name=condition_name,
         split_mode=config.split_mode,
-        holdout_timepoints=config.holdout_timepoints
+        holdout_timepoints=config.holdout_timepoints,
+        holdout_condition=getattr(config, 'holdout_condition', None),
+        partial_condition_train_timepoints=getattr(config, 'partial_condition_train_timepoints', None)
     )
     logger.info(f"Split mode: {config.split_mode}")
     if config.split_mode == "holdout":
         logger.info(f"Holdout timepoints: {config.holdout_timepoints}h")
+    elif config.split_mode == "condition_holdout":
+        logger.info(f"Holdout condition: {getattr(config, 'holdout_condition', None)}")
     else:
         logger.info(f"Training cutoff: {config.train_until_hour}h")
     logger.info(f"Training points: {len(train_data['t'])} | Test points: {len(test_data['t'])}")
@@ -91,27 +95,29 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
     for epoch in progress_bar:
         model.train()
         optimizer.zero_grad()
-        t_physics_raw, drugs_physics_raw = get_collocation_points(config.num_physics_points)
-        t_physics = t_physics_raw.to(device)
-        drugs_physics = drugs_physics_raw.to(device)
+        t_collocation, drugs_collocation = get_collocation_points(config.num_physics_points)
+        t_physics = t_collocation.to(device)
+        drugs_physics = drugs_collocation.to(device)
         t_data_batch, drugs_data_batch, y_exp_batch = next(iter(data_loader))
         t_data_batch = t_data_batch.to(device)
         drugs_data_batch = drugs_data_batch.to(device)
         y_exp_batch = y_exp_batch.to(device)
         jitter = (torch.rand_like(drugs_data_batch) - 0.5) * 0.02
-        y_pred = model(t_data_batch, drugs_data_batch + jitter)
+        drugs_jittered = drugs_data_batch + jitter
+        y_pred = model(t_data_batch, drugs_jittered)
         l_data = mse_loss(y_pred, y_exp_batch)
-        phys_weight_multiplier = min(1.0, (epoch + 1) / (config.num_epochs * 0.5))
+        phys_weight_multiplier = min(1.0, (epoch + 1) / (config.num_epochs * 0.3))
         current_phys_weight = config.weights.physics * phys_weight_multiplier
         l_physics = compute_physics_loss(model, t_physics, drugs_physics, k_params, scalers_device)
-        idx0 = (t_data_batch == 0).squeeze()
+        idx0 = (t_data_batch == 0).squeeze(dim=1)
         if idx0.any():
-            y0_pred = model(t_data_batch[idx0], drugs_data_batch[idx0])
+            y0_pred = model(t_data_batch[idx0], drugs_jittered[idx0])
             l_boundary = mse_loss(y0_pred, y_exp_batch[idx0])
         else:
             l_boundary = torch.tensor(0.0, device=device)
         l_conservation = compute_conservation_loss(y_pred, scalers_device)
-        l_sparsity = sum(torch.abs(p) for p in k_params.parameters())
+        param_list = list(k_params.parameters())
+        l_sparsity = sum(torch.abs(p) for p in param_list) / len(param_list)
         l_steady_state = compute_steady_state_loss(model, t_physics, drugs_physics, scalers_device)
         total_loss = (config.weights.data * l_data +
                       current_phys_weight * l_physics +
@@ -123,7 +129,8 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
             logger.error(f"NaN detected at epoch {epoch}. Terminating.")
             break
         total_loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        all_params = list(model.parameters()) + list(k_params.parameters())
+        nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
         optimizer.step()
         scheduler.step()
         if epoch % 100 == 0:
@@ -137,7 +144,7 @@ def train_pinn(config: TrainingConfig, condition_name: Optional[str] = None) -> 
                 'l_physics': l_physics.item(),
                 'l_boundary': l_boundary.item(),
                 'l_conservation': l_conservation.item(),
-                'l_sparsity': l_sparsity.item() if torch.is_tensor(l_sparsity) else l_sparsity,
+                'l_sparsity': l_sparsity.item(),
                 'l_steady_state': l_steady_state.item(),
                 'l_test': l_test
             })

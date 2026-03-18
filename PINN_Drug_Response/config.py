@@ -24,8 +24,10 @@ class TrainingConfig:
     seed: int = 42
     
     train_until_hour: float = 48.0
-    split_mode: str = "holdout"
+    split_mode: str = "partial_condition_holdout"
     holdout_timepoints: List[float] = field(default_factory=lambda: [4.0, 24.0])
+    holdout_condition: str = "Vem + PI3Ki Combo"
+    partial_condition_train_timepoints: List[float] = field(default_factory=lambda: [0.0, 4.0])
     
     num_epochs: int = 5000
     learning_rate: float = 1e-4
@@ -40,12 +42,32 @@ class TrainingConfig:
     
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "experiment_name": self.experiment_name,
-            "seed": self.seed,
-            "split_mode": self.split_mode,
-            "train_until_hour": self.train_until_hour,
-            "holdout_timepoints": self.holdout_timepoints,
-            "num_epochs": self.num_epochs,
-            "learning_rate": self.learning_rate,
-            "physics_points": self.num_physics_points,
+            "experiment_name":                    self.experiment_name,
+            "output_dir":                         self.output_dir,
+            "seed":                               self.seed,
+            "split_mode":                         self.split_mode,
+            "train_until_hour":                   self.train_until_hour,
+            "holdout_timepoints":                 self.holdout_timepoints,
+            "holdout_condition":                  self.holdout_condition,
+            "partial_condition_train_timepoints": self.partial_condition_train_timepoints,
+            "num_epochs":                         self.num_epochs,
+            "learning_rate":                      self.learning_rate,
+            "weight_decay":                       self.weight_decay,
+            "lr_decay_gamma":                     self.lr_decay_gamma,
+            "lr_decay_step":                      self.lr_decay_step,
+            "num_physics_points":                 self.num_physics_points,
+            "model": {
+                "input_size":        self.model.input_size,
+                "hidden_size":       self.model.hidden_size,
+                "output_size":       self.model.output_size,
+                "num_hidden_layers": self.model.num_hidden_layers,
+            },
+            "weights": {
+                "data":         self.weights.data,
+                "physics":      self.weights.physics,
+                "boundary":     self.weights.boundary,
+                "conservation": self.weights.conservation,
+                "sparsity":     self.weights.sparsity,
+                "steady_state": self.weights.steady_state,
+            },
         }

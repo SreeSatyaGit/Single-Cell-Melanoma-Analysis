@@ -22,9 +22,9 @@ class GatedResidualBlock(nn.Module):
         gate_weights = torch.sigmoid(self.gate(x))
         out = out * gate_weights
         return self.ln(out + residual)
+
 class PINN(nn.Module):
     """
-    Advanced Physics-Informed Neural Network.
     Features: Multi-path input embedding, Gated Residual blocks, and LayerNorm.
     """
     DRUG_ORDER = ['vemurafenib', 'trametinib', 'pi3k_inhibitor', 'ras_inhibitor']
@@ -91,7 +91,7 @@ class PINN(nn.Module):
         Args:
             t_np: Time points in hours (numpy array).
             drugs_dict: Dictionary of drug concentrations keyed by canonical drug names.
-            scalers: Dictionary containing 't_range', 'y_std', 'y_mean' scaling factors.
+            scalers: Dictionary containing 't_range', 'y_range', 'y_min' scaling factors.
             device: 'cpu' or 'cuda'.
             normalized: If True, returns results in normalized range.
                        If False, returns results in original A.U. scale.
@@ -101,10 +101,16 @@ class PINN(nn.Module):
         missing_drugs = set(self.DRUG_ORDER) - set(drugs_dict.keys())
         if missing_drugs:
             raise ValueError(f"Missing drug concentrations: {missing_drugs}. Expected keys: {self.DRUG_ORDER}")
-        required_scalers = ['t_range', 'y_std', 'y_mean']
+        required_scalers = ['t_range', 'y_min', 'y_range']
         missing_scalers = set(required_scalers) - set(scalers.keys())
         if missing_scalers:
             raise ValueError(f"Missing scalers: {missing_scalers}")
+            
+        if scalers['y_min'].shape != (self.model_config['output_size'],):
+            raise ValueError(
+                f"Scaler 'y_min' has shape {scalers['y_min'].shape}, "
+                f"expected ({self.model_config['output_size']},)"
+            )
         self.eval()
         with torch.no_grad():
             t_max = scalers['t_range'].item() if torch.is_tensor(scalers['t_range']) else scalers['t_range']
@@ -118,6 +124,6 @@ class PINN(nn.Module):
             y_pred = y_pred_norm.cpu().numpy()
             if normalized:
                 return y_pred
-            y_std = scalers['y_std'].cpu().numpy() if torch.is_tensor(scalers['y_std']) else scalers['y_std']
-            y_mean = scalers['y_mean'].cpu().numpy() if torch.is_tensor(scalers['y_mean']) else scalers['y_mean']
-            return y_pred * y_std + y_mean
+            y_min = scalers['y_min'].cpu().numpy() if torch.is_tensor(scalers['y_min']) else scalers['y_min']
+            y_range = scalers['y_range'].cpu().numpy() if torch.is_tensor(scalers['y_range']) else scalers['y_range']
+            return y_pred * y_range + y_min

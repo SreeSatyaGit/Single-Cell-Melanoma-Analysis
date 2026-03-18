@@ -34,9 +34,9 @@ def _compute_basal_steady_state() -> Dict[str, np.ndarray]:
 
 _BASAL_SS = _compute_basal_steady_state()
 
-_NO_DRUG_TIME_POINTS = np.array([0.0], dtype=np.float32)
+_NO_DRUG_TIME_POINTS = np.array([0, 1, 4, 8, 24, 48])
 _NO_DRUG_SPECIES = {
-    sp: np.array([_BASAL_SS[sp]], dtype=np.float32)
+    sp: np.full(len(_NO_DRUG_TIME_POINTS), _BASAL_SS[sp])
     for sp in SPECIES_ORDER
 }
 
@@ -155,9 +155,7 @@ def prepare_training_tensors(
     train_until_hour: float = 48.0, 
     condition_name: Optional[str] = None,
     split_mode: str = "holdout",
-    holdout_timepoints: Optional[List[float]] = None,
-    holdout_condition: Optional[str] = None,
-    partial_condition_train_timepoints: Optional[List[float]] = None,
+    holdout_timepoints: Optional[List[float]] = None
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, torch.Tensor]]:
     """
     Prepares training and testing tensors from raw experimental data.
@@ -165,22 +163,10 @@ def prepare_training_tensors(
     Args:
         train_until_hour: Cutoff time for training (used in 'cutoff' mode).
         condition_name: If provided, filters to only this condition.
-        split_mode: 'cutoff'                    = train on t <= train_until_hour,
-                    'holdout'                   = leave specific timepoints out for testing,
-                    'condition_holdout'         = leave entire named condition out for testing,
-                    'partial_condition_holdout' = train on early timepoints of holdout_condition
-                                                  only, predict remaining timepoints of that
-                                                  condition. All other conditions train in full.
+        split_mode: 'cutoff' = train on t <= train_until_hour,
+                    'holdout' = leave specific timepoints out for testing.
         holdout_timepoints: List of timepoints (in hours) to hold out for testing.
-                           Only used when split_mode='holdout'. Default: [8.0, 24.0].
-        holdout_condition: Name of the condition to hold out entirely.
-                           Only used when split_mode='condition_holdout'.
-                           Must exactly match a 'name' field in TRAINING_DATA_LIST.
-        partial_condition_train_timepoints: Timepoints (hours) to INCLUDE in training for
-            holdout_condition. All other timepoints of that condition become the test set.
-            Only used when split_mode='partial_condition_holdout'.
-            Example: [0.0, 4.0] trains on t=0 and t=4 of holdout_condition,
-            holds out t=1, 8, 24, 48.
+                           Only used when split_mode='holdout'. Default: [24.0].
         
     Returns:
         train_data: Dict with keys 't', 'drugs', 'y_norm', 'y_raw'
@@ -226,65 +212,8 @@ def prepare_training_tensors(
     
     if split_mode == "holdout":
         holdout_set = set(holdout_timepoints)
-        test_mask = np.array([
-            any(abs(float(t) - h) < 1e-4 for h in holdout_timepoints)
-            for t in t_data
-        ])
+        test_mask = np.array([t in holdout_set for t in t_data])
         train_mask = ~test_mask
-    elif split_mode == "condition_holdout":
-        if holdout_condition is None:
-            raise ValueError(
-                "split_mode='condition_holdout' requires holdout_condition to be specified. "
-                f"Available conditions: {[e['name'] for e in TRAINING_DATA_LIST]}"
-            )
-        available = [e['name'] for e in TRAINING_DATA_LIST]
-        if holdout_condition not in available:
-            raise ValueError(
-                f"holdout_condition='{holdout_condition}' not found. "
-                f"Available conditions: {available}"
-            )
-        # Build a per-row mask by tracking which condition each row came from
-        condition_labels = []
-        for exp in experiments:
-            condition_labels.extend([exp['name']] * len(exp['time_points']))
-        condition_labels = np.array(condition_labels)
-        test_mask  = (condition_labels == holdout_condition)
-        train_mask = ~test_mask
-    elif split_mode == "partial_condition_holdout":
-        if holdout_condition is None:
-            raise ValueError(
-                "split_mode='partial_condition_holdout' requires holdout_condition "
-                "to be specified. "
-                f"Available conditions: {[e['name'] for e in TRAINING_DATA_LIST]}"
-            )
-        if partial_condition_train_timepoints is None:
-            raise ValueError(
-                "split_mode='partial_condition_holdout' requires "
-                "partial_condition_train_timepoints to be specified. "
-                "Example: [0.0, 4.0]"
-            )
-        available = [e['name'] for e in TRAINING_DATA_LIST]
-        if holdout_condition not in available:
-            raise ValueError(
-                f"holdout_condition='{holdout_condition}' not found. "
-                f"Available conditions: {available}"
-            )
-        # Build per-row condition labels (must iterate over experiments, not TRAINING_DATA_LIST)
-        condition_labels = []
-        for exp in experiments:
-            condition_labels.extend([exp['name']] * len(exp['time_points']))
-        condition_labels = np.array(condition_labels)
-
-        train_t_set = set(partial_condition_train_timepoints)
-
-        # For the target condition: train only on the specified early timepoints
-        # For all other conditions: always train
-        train_mask = np.array([
-            True if label != holdout_condition
-            else any(abs(float(t) - anchor) < 1e-4 for anchor in train_t_set)
-            for label, t in zip(condition_labels, t_data)
-        ])
-        test_mask = ~train_mask
     else:
         train_mask = t_data <= train_until_hour
         test_mask = ~train_mask
@@ -311,60 +240,61 @@ def prepare_training_tensors(
     test_data = package_data(test_mask)
     
     scalers = {
-        'y_min': torch.tensor(y_min, dtype=torch.float32),
-        'y_range': torch.tensor(y_range, dtype=torch.float32),
+        'y_mean': torch.tensor(y_min, dtype=torch.float32),
+        'y_std': torch.tensor(y_range, dtype=torch.float32),
         't_range': torch.tensor(t_max, dtype=torch.float32)
     }
     
     return train_data, test_data, scalers
 
-def get_collocation_points(n_points: int = 2000, no_drug_fraction: float = 0.2) -> Tuple[torch.Tensor, torch.Tensor]:
+def get_collocation_points(num_points: int = 2000, basal_fraction: float = 0.2) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Generates physics collocation points covering the domain [0, 48].
+    Generates physics collocation points covering the temporal domain [0, 1] (normalized).
     Drug concentrations are sampled from actual training conditions with
-    small perturbations, ensuring physics is enforced near real data.
+    small perturbations to ensure physics is enforced near real data manifolds.
     
-    A guaranteed fraction of points are pure no-drug (all zeros) to enforce
+    A guaranteed fraction of points are pure no-drug (basal) to enforce
     the steady-state constraint: dX/dt ≈ 0 when no drug is applied.
 
     Args:
-        n_points: Total points to generate.
-        no_drug_fraction: Fraction of points guaranteed to be no-drug (default 0.2).
+        num_points: Total number of points to generate.
+        basal_fraction: Fraction of points guaranteed to be zero-drug (default 0.2).
         
     Returns:
-        t_physics: Temporal points (normalized).
-        drugs_physics: Drug concentration points.
+        t_collocation: Normalized temporal points (num_points, 1).
+        drugs_collocation: Drug concentration points (num_points, 4).
     """
-    t_physics = np.random.uniform(0, 1.0, size=(n_points, 1)).astype(np.float32)
+    # 1. Sample random time points across the entire domain
+    t_collocation = np.random.uniform(0, 1.0, size=(num_points, 1)).astype(np.float32)
     
-    actual_conditions = np.array([
+    # 2. Extract base drug conditions from training data
+    base_conditions = np.array([
         [exp['drugs']['vemurafenib'], exp['drugs']['trametinib'],
          exp['drugs']['pi3k_inhibitor'], exp['drugs']['ras_inhibitor']]
         for exp in TRAINING_DATA_LIST
     ], dtype=np.float32)
     
-    n_no_drug = int(n_points * no_drug_fraction)
-    n_other = n_points - n_no_drug
+    # 3. Calculate counts for basal vs treated points
+    num_basal = int(num_points * basal_fraction)
+    num_treated = num_points - num_basal
     
-    idx = np.random.choice(len(actual_conditions), size=n_other)
-    drugs_other = actual_conditions[idx].copy()
+    # 4. Generate treated points with perturbations
+    sample_idx = np.random.choice(len(base_conditions), size=num_treated)
+    treated_drugs = base_conditions[sample_idx].copy()
     
-    perturbation = np.random.normal(0, 0.05, size=(n_other, 4)).astype(np.float32)
+    # Add Gaussian jitter and clip to ensure positive concentrations
+    jitter = np.random.normal(0, 0.05, size=(num_treated, 4)).astype(np.float32)
+    treated_drugs = np.clip(treated_drugs + jitter, 0, None)
     
-    # Identify rows that are truly no-drug (all zeros) and protect them from jitter
-    no_drug_rows = (drugs_other.sum(axis=1) < 1e-6)
-    perturbation[no_drug_rows] = 0.0  # do not perturb no-drug conditions
+    # 5. Generate basal (no-drug) points
+    basal_drugs = np.zeros((num_basal, 4), dtype=np.float32)
     
-    drugs_other += perturbation
-    drugs_other = np.clip(drugs_other, 0.0, None).astype(np.float32)
+    # 6. Combine, shuffle and convert to tensors
+    drugs_collocation = np.concatenate([basal_drugs, treated_drugs], axis=0)
     
-    drugs_no_drug = np.zeros((n_no_drug, 4), dtype=np.float32)
+    shuffle_idx = np.random.permutation(num_points)
+    t_collocation = t_collocation[shuffle_idx]
+    drugs_collocation = drugs_collocation[shuffle_idx]
     
-    drugs_phys = np.concatenate([drugs_no_drug, drugs_other], axis=0)
-    
-    shuffle_idx = np.random.permutation(n_points)
-    t_physics = t_physics[shuffle_idx]
-    drugs_phys = drugs_phys[shuffle_idx]
-    
-    return torch.tensor(t_physics), torch.tensor(drugs_phys)
+    return torch.tensor(t_collocation), torch.tensor(drugs_collocation)
 
