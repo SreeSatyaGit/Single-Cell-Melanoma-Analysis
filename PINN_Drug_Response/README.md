@@ -233,7 +233,7 @@ The model enforces these biological ODEs:
 ```
 d(pMEK)/dt = k1·pCRAF·(1-Tram)·(1-AKT_inh) + AKT_relief - k2·pMEK
 d(pERK)/dt = k3·pMEK·(1-DUSP6) - k4·pERK
-d(DUSP6)/dt = k5·pERK²/(Km²+pERK²) - k6·DUSP6
+d(DUSP6)/dt = k5·pERK²/(Km²+pERK²) - k6·DUSP6 - k7·ERK_low_gate·DUSP6²
 ```
 
 **PI3K:**
