@@ -86,7 +86,10 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # This creates a delayed negative feedback loop
     k_dusp_synth = k.get('k_dusp_synth', 0.8)
     k_dusp_deg = k.get('k_dusp_deg', 0.5)
+    k_dusp_deg2 = k.get('k_dusp_deg2', 0.15)
     Km_dusp = k.get('Km_dusp', 0.4)
+    K_dusp_off = k.get('K_dusp_off', 0.35)
+    n_dusp_off = k.get('n_dusp_off', 2.0)
     
     # DUSP6 synthesis: cooperative induction by ERK (Hill coefficient > 1)
     n_dusp = k.get('n_dusp', 2.5)  # Cooperativity for DUSP6 induction
@@ -95,6 +98,13 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     # DUSP6 phosphatase activity on ERK
     k_dusp_cat = k.get('k_dusp_cat', 0.6)
     DUSP6_inhibition = (k_dusp_cat * DUSP6) / (Km + DUSP6 + 1e-8)
+    
+    # Nonlinear DUSP6 destabilization when ERK activity falls.
+    # This implements a mixed linear + fall-triggered nonlinear degradation
+    # so DUSP6 can decay after the ERK pulse resolves instead of remaining
+    # trapped in a late-time steady state.
+    ERK_low_gate = (K_dusp_off**n_dusp_off) / (K_dusp_off**n_dusp_off + pERK**n_dusp_off + 1e-8)
+    DUSP6_degradation = k_dusp_deg * DUSP6 + k_dusp_deg2 * ERK_low_gate * DUSP6**2
     
     # Feedback 2: ERK inhibits SOS (RAS activator) - reduces upstream signaling
     # This feedback reduces RAF activation
@@ -242,11 +252,11 @@ def compute_physics_loss(model, t_physics, drugs, k_params, scalers):
     )
     
     # d(DUSP6)/dt
-    # Synthesis: ERK-dependent (positive feedback creating negative loop)
-    # Degradation: constitutive
+    # Synthesis: ERK-dependent induction
+    # Degradation: baseline linear turnover plus ERK-low-triggered nonlinear clearance
     res_pDUSP6 = dy_dt[:, 7] - (
         DUSP6_synthesis  # Cooperative ERK-dependent synthesis
-        - k_dusp_deg * DUSP6
+        - DUSP6_degradation
     )
     
     # ---------------------- PI3K Pathway ODEs ----------------------
