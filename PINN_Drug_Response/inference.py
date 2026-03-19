@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 from pinn_model import PINN
 from data_utils import SPECIES_ORDER, TRAINING_DATA_LIST
