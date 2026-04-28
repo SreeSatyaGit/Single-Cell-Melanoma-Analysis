@@ -1,0 +1,56 @@
+{
+  "KSR_MEK_PPI": {
+    "label": "KSR\u2013MEK complex (apo)",
+    "dG_kcal_mol": -3.396,
+    "Kd_M": 0.0032321783189670347,
+    "Kd_nM": 3232178.32,
+    "total_ICs": 224,
+    "contacts": {
+      "CC": 46,
+      "CA": 15,
+      "CP": 24,
+      "AC": 16,
+      "AA": 32,
+      "AP": 17,
+      "PC": 29,
+      "PA": 24,
+      "PP": 21
+    }
+  },
+  "KSR_MEK_Tram_PPI": {
+    "label": "KSR\u2013MEK complex (Trametinib-bound)",
+    "dG_kcal_mol": -3.297,
+    "Kd_M": 0.003817679461218063,
+    "Kd_nM": 3817679.46,
+    "total_ICs": 281,
+    "contacts": {
+      "CC": 45,
+      "CA": 23,
+      "CP": 24,
+      "AC": 25,
+      "AA": 51,
+      "AP": 23,
+      "PC": 32,
+      "PA": 34,
+      "PP": 24
+    }
+  },
+  "MEK_Tram_Vina": {
+    "label": "MEK\u2013Trametinib",
+    "vina_score_only_kcal_mol": 1.751,
+    "vina_local_only_kcal_mol": -4.16,
+    "vina_score_kcal_mol": -4.16
+  },
+  "KSR_MEK_Tram_Vina": {
+    "label": "KSR\u2013MEK complex + Trametinib",
+    "vina_score_only_kcal_mol": 7.326,
+    "vina_local_only_kcal_mol": 0.396,
+    "vina_score_kcal_mol": 0.396
+  },
+  "KSR_Tram_Vina": {
+    "label": "KSR\u2013Trametinib",
+    "vina_score_only_kcal_mol": -6.878,
+    "vina_local_only_kcal_mol": -9.114,
+    "vina_score_kcal_mol": -9.114
+  }
+}

@@ -1,7 +1,5 @@
-Matlab/
 *.pdf
 *.png
-*.m
 *.cif
 *.pdb
 *.pdbqt
