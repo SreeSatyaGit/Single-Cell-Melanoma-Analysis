@@ -31,12 +31,12 @@ OUT  = BASE
 W, H = 1600, 1200   # pixels; 300 DPI → ~13.3 × 10 cm print size
 
 # ── Consistent colour palette ─────────────────────────────────────────────────
-COL_MEK    = "0x3880B8"   # steel blue   — MEK / Chain A
-COL_KSR    = "0xD75E37"   # burnt orange — KSR / Chain C
-COL_TRAM_C = "0xFFDB1A"   # gold         — Trametinib carbon
-HEX_MEK    = "#3880B8"
-HEX_KSR    = "#D75E37"
-HEX_TRAM   = "#FFDB1A"
+COL_MEK    = "0xF090B0"   # soft pink       — MEK / Chain A  (matches Target)
+COL_KSR    = "0x60C8D8"   # soft cyan       — KSR / Chain C  (matches Target)
+COL_TRAM   = "0x0D47A1"   # deep navy blue  — Trametinib / AMP-PNP (all atoms)
+HEX_MEK    = "#F090B0"
+HEX_KSR    = "#60C8D8"
+HEX_TRAM   = "#0D47A1"
 
 
 # ═══════════════════════ PyMOL helpers ════════════════════════════════════════
@@ -73,17 +73,15 @@ def color_chains():
 def style_ligand(sel="lig"):
     """
     Stick-ball representation for the small molecule.
-    Gold carbons, CPK colours for all heteroatoms.
+    Entire molecule coloured deep navy blue so it stands out clearly against
+    both the pink MEK and cyan KSR surfaces.
     """
-    cmd.show("sticks",   sel)
-    cmd.hide("cartoon",  sel)
-    cmd.color(COL_TRAM_C, f"{sel} and elem C")
-    cmd.color("0xFF4444",  f"{sel} and elem O")
-    cmd.color("0x4488FF",  f"{sel} and elem N")
-    cmd.color("0x66BB66",  f"{sel} and elem F")
-    cmd.color("0xAA44AA",  f"{sel} and elem I")
+    cmd.show("sticks",  sel)
+    cmd.hide("cartoon", sel)
+    cmd.color(COL_TRAM, sel)          # uniform deep navy — all atoms
     cmd.set("stick_ball",       1,   sel)
-    cmd.set("stick_ball_ratio", 1.5, sel)
+    cmd.set("stick_ball_ratio", 1.8, sel)   # slightly larger balls for visibility
+    cmd.set("stick_radius",     0.22, sel)  # slightly thicker sticks
 
 
 def show_pocket(protein_sel, lig_sel, pocket_color=None, cutoff=5.0):
@@ -102,6 +100,16 @@ def show_pocket(protein_sel, lig_sel, pocket_color=None, cutoff=5.0):
         cmd.color(COL_MEK, "pocket and chain A")
         cmd.color(COL_KSR, "pocket and chain C")
     cmd.deselect()
+
+
+def show_surface(sel, transparency=0.4):
+    """
+    Add a semi-transparent molecular surface that reveals the cartoon beneath.
+    transparency=0.4 matches the ~40 % translucency seen in the Target figure.
+    Only polymer (protein) atoms are surfaced so the ligand sticks remain visible.
+    """
+    cmd.show("surface", f"{sel} and polymer")
+    cmd.set("transparency", transparency, f"{sel} and polymer")
 
 
 def hide_long_loops(max_loop_len=8):
@@ -256,8 +264,8 @@ cmd.load(os.path.join(BASE, "KSR_MEK_protein.pdb"), "KSR_MEK")
 cmd.dss("KSR_MEK")
 cmd.show("cartoon", "all")
 color_chains()
-# Hide long disordered loops (>8 residues); keeps short connecting loops intact
-hide_long_loops(max_loop_len=8)
+show_surface("KSR_MEK")
+color_chains()   # re-apply after surface so chain colours stay consistent
 
 # Interface sticks — residues within 5.5 Å across the chain boundary
 cmd.select("iface", "chain A within 5.5 of chain C or chain C within 5.5 of chain A")
@@ -271,6 +279,7 @@ cmd.orient("all")
 cmd.zoom("all", buffer=8)
 cmd.turn("y",  20)
 cmd.turn("x", -10)
+cmd.turn("x",  90)
 
 add_scale_bar(20)
 path1 = ray_save("Fig1_KSR_MEK.png")
@@ -290,17 +299,17 @@ cmd.load(os.path.join(BASE, "KSR_MEK_Tram_ligand.pdb"),  "lig")
 cmd.dss("prot")
 cmd.show("cartoon", "prot")
 color_chains()
-hide_long_loops(max_loop_len=8)
+show_surface("prot")
+color_chains()   # re-apply chain colours to surface
 style_ligand("lig")
 show_pocket("prot", "lig", cutoff=5.0)
 # Restore pocket residues that hide_long_loops may have hidden
 cmd.show("sticks", "pocket")
 
-# Zoom on the ligand + its pocket
-cmd.orient("lig")
-cmd.zoom("lig", buffer=18)
-cmd.turn("x", -10)
-cmd.turn("y",   5)
+# Rotate 90° from y toward z so the complex mid faces exactly along the z-axis.
+cmd.orient("all")          # aligns the long axis of the complex
+cmd.zoom("lig", buffer=22) # frame the ligand with enough protein context visible
+cmd.turn("x",  90)         # 90° rotation from y toward z — mid faces z-axis at 0°
 
 add_scale_bar(10)
 path2 = ray_save("Fig2_KSR_MEK_Tram.png")
@@ -320,7 +329,8 @@ cmd.load(os.path.join(BASE, "MEK_Tram_ligand.pdb"),  "lig")
 cmd.dss("MEK")
 cmd.show("cartoon", "MEK")
 cmd.color(COL_MEK, "MEK")
-hide_long_loops(max_loop_len=8)
+show_surface("MEK")
+cmd.color(COL_MEK, "MEK")   # re-apply pink after surface
 style_ligand("lig")
 show_pocket("MEK", "lig", pocket_color=COL_MEK, cutoff=5.0)
 cmd.show("sticks", "pocket")
@@ -329,6 +339,7 @@ cmd.orient("lig")
 cmd.zoom("lig", buffer=18)
 cmd.turn("x", -10)
 cmd.turn("y",  10)
+cmd.turn("x",  90)
 
 add_scale_bar(10)
 path3 = ray_save("Fig3_MEK_Tram.png")
@@ -348,7 +359,8 @@ cmd.load(os.path.join(BASE, "KSR_Tram_ligand.pdb"),  "lig")
 cmd.dss("KSR")
 cmd.show("cartoon", "KSR")
 cmd.color(COL_KSR, "KSR")
-hide_long_loops(max_loop_len=8)
+show_surface("KSR")
+cmd.color(COL_KSR, "KSR")   # re-apply cyan after surface
 style_ligand("lig")
 show_pocket("KSR", "lig", pocket_color=COL_KSR, cutoff=5.0)
 cmd.show("sticks", "pocket")
@@ -357,6 +369,7 @@ cmd.orient("lig")
 cmd.zoom("lig", buffer=18)
 cmd.turn("x", -10)
 cmd.turn("y",  10)
+cmd.turn("x",  90)
 
 add_scale_bar(10)
 path4 = ray_save("Fig4_KSR_Tram.png")
