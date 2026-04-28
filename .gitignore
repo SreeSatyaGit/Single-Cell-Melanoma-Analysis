@@ -1,0 +1,8 @@
+Matlab/
+*.pdf
+*.png
+*.m
+*.cif
+*.pdb
+*.pdbqt
+.DS_Store
